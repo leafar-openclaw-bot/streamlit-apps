@@ -3,13 +3,13 @@ Wedding Guest Network Visualizer
 PyVis force graph: Groom/Bride → Social Group hubs → Guests.
 Built by OpenClaw 🦞
 """
-# v4.0.0 — Back to PyVis + st.html (reliable on Streamlit Cloud); group-hub topology
+# v4.1.0 — cdn_resources="in_line" + components.html() fixes blank graph on Streamlit Cloud
 
 import json
 import math
 import pathlib
-import re
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 from pyvis.network import Network
 
@@ -65,8 +65,6 @@ ALL_GROUPS = sorted([
 if "guests" not in st.session_state:
     st.session_state.guests = GUEST_INITIAL
 
-if "selected_guest" not in st.session_state:
-    st.session_state.selected_guest = None
 
 # =============================================================================
 # SIDEBAR
@@ -104,40 +102,14 @@ with st.sidebar:
 
     st.divider()
 
-    # Edit selected guest
-    selected = st.session_state.selected_guest
-    if selected:
-        real = next((g for g in st.session_state.guests if g["name"] == selected["name"]), None)
-        if real:
-            st.subheader(f"Edit: {real['name']}")
-            with st.form("edit_form"):
-                ep = st.selectbox("Priority", ["High", "Medium", "Low"],
-                                  index=["High", "Medium", "Low"].index(real["priority"]))
-                eg = st.multiselect("Groups", ALL_GROUPS, default=real["groups"])
-                en = st.text_input("Notes", value=real["notes"])
-                c1, c2 = st.columns(2)
-                if c1.form_submit_button("Save"):
-                    real["priority"] = ep
-                    real["groups"] = eg
-                    real["notes"] = en
-                    st.session_state.selected_guest = None
-                    st.rerun()
-                if c2.form_submit_button("Delete"):
-                    st.session_state.guests = [g for g in st.session_state.guests if g["name"] != real["name"]]
-                    st.session_state.selected_guest = None
-                    st.rerun()
-        if st.button("Clear selection"):
-            st.session_state.selected_guest = None
-            st.rerun()
-    else:
-        st.subheader("Statistics")
-        gs = st.session_state.guests
-        st.metric("Total", len(gs))
-        st.metric("High Priority", sum(1 for g in gs if g["priority"] == "High"))
-        c1, c2 = st.columns(2)
-        c1.metric("Rafael", sum(1 for g in gs if g["side"] == "Rafael"))
-        c2.metric("Catarina", sum(1 for g in gs if g["side"] == "Catarina"))
-        st.metric("Common", sum(1 for g in gs if g["side"] == "Common"))
+    st.subheader("Statistics")
+    gs = st.session_state.guests
+    st.metric("Total", len(gs))
+    st.metric("High Priority", sum(1 for g in gs if g["priority"] == "High"))
+    c1, c2 = st.columns(2)
+    c1.metric("Rafael", sum(1 for g in gs if g["side"] == "Rafael"))
+    c2.metric("Catarina", sum(1 for g in gs if g["side"] == "Catarina"))
+    st.metric("Common", sum(1 for g in gs if g["side"] == "Common"))
 
 # =============================================================================
 # MAIN
@@ -163,6 +135,7 @@ def build_network(guests, physics=True, spring_length=120, spring_strength=0.02)
         height="700px", width="100%",
         bgcolor="#1e1e1e", font_color="white",
         directed=False, notebook=False,
+        cdn_resources="in_line",
     )
 
     net.set_options(json.dumps({
@@ -252,13 +225,7 @@ if filtered:
                         spring_length=120,
                         spring_strength=0.02)
     html = net.generate_html()
-    # Ensure a working vis-network CDN
-    html = re.sub(
-        r'src="https?://[^"]*vis-network[^"]*"',
-        'src="https://cdnjs.cloudflare.com/ajax/libs/vis/4.21.0/vis-network.min.js"',
-        html,
-    )
-    st.html(html)
+    components.html(html, height=750, scrolling=False)
 else:
     st.warning("No guests match the current filters.")
 
@@ -300,4 +267,4 @@ else:
     st.info("No guests to display.")
 
 st.divider()
-st.caption("Built by OpenClaw 🦞 | Rafael & Catarina | v4.0.0")
+st.caption("Built by OpenClaw 🦞 | Rafael & Catarina | v4.1.0")
