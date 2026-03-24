@@ -298,8 +298,8 @@ def build_d3(guests, highlighted_name):
 <html><head><meta charset="utf-8">
 <style>
 *{{margin:0;padding:0;box-sizing:border-box}}
-body{{background:#0E1117;font-family:'Segoe UI',Arial,sans-serif;overflow:hidden}}
-svg{{width:100%;height:100vh;display:block}}
+body{{background:#0E1117;font-family:'Segoe UI',Arial,sans-serif;overflow:hidden;width:100%;height:700px}}
+svg{{width:100%;height:700px;display:block}}
 .link{{fill:none}}
 .node-person circle{{stroke:rgba(255,255,255,0.2);stroke-width:1.5px;cursor:pointer;transition:stroke .15s}}
 .node-person:hover circle{{stroke:white;stroke-width:2.5px}}
@@ -330,15 +330,39 @@ svg{{width:100%;height:100vh;display:block}}
   <div class="li"><div class="ld" style="background:#1976D2"></div> ● Person</div>
   <div class="li"><div class="ld" style="background:#FFD700"></div> ⭐ Highlighted</div>
 </div>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+<script>
+// Load D3 dynamically with fallback CDNs
+(function(){{
+  var cdns = [
+    "https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js",
+    "https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js",
+    "https://unpkg.com/d3@7.9.0/dist/d3.min.js"
+  ];
+  var idx = 0;
+  function tryLoad(){{
+    if(idx >= cdns.length){{
+      document.body.innerHTML='<div style="color:red;padding:20px">Failed to load D3.js from all CDNs</div>';
+      return;
+    }}
+    var s=document.createElement("script");
+    s.src=cdns[idx++];
+    s.onerror=tryLoad;
+    s.onload=init;
+    document.head.appendChild(s);
+  }}
+  tryLoad();
+}})();
+</script>
 <script>
 const nodes = {nodes_json};
 const links = {links_json};
 const groupIds = {group_ids_json};
 const hlName = {hl_json} || null;
 
-function W(){{return window.innerWidth}}
-function H(){{return window.innerHeight}}
+function W(){{return document.documentElement.clientWidth||window.innerWidth||800}}
+function H(){{return document.documentElement.clientHeight||window.innerHeight||700}}
+
+function init() {{
 
 // Set fixed positions (ratios → pixels)
 nodes.forEach(n => {{
@@ -349,7 +373,7 @@ groupIds.forEach(id => {{
   const n=nodes.find(n=>n.id===id);
   if(!n)return;
   const xr=n.fx,yr=n.fy;
-  if(xr&&yr){{n.fx=xr*H();n.fy=yr*H();n.fixed=true}}
+  if(xr&&yr){{n.fx=xr*W();n.fy=yr*H();n.fixed=true}}
 }});
 
 const svg=d3.select("#graph");
@@ -597,6 +621,8 @@ window.addEventListener("resize",()=>{{
   }});
   sim.alpha(.2).restart();
 }});
+
+}} // end init
 </script></body></html>"""
     return html
 
