@@ -418,11 +418,19 @@ def build_network(guests, spring_length=150, spring_strength=0.01, physics=True)
 if filtered_guests:
     net = build_network(filtered_guests, spring_length, spring_strength, physics_enabled)
     
-    # Generate HTML
-    html = net.generate_html()
+    # Generate HTML - embed vis.js CDN for better compatibility
+    html = net.generate_html(notebook=False, open=False)
     
-    # Display in Streamlit
-    st.components.v1.html(html, height=720, scrolling=True)
+    # Inject vis.js CDN for Streamlit Cloud compatibility
+    if "cdnjs" in html or "unpkg" in html or "jsdelivr" in html:
+        # Replace any existing CDN links with a reliable one
+        html = html.replace(
+            'src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"',
+            'src="https://cdnjs.cloudflare.com/ajax/libs/vis/4.21.0/vis-network.min.js"'
+        )
+    
+    # Display in Streamlit using st.html (available in Streamlit 1.27+)
+    st.html(html)
 else:
     st.warning("No guests match the current filters. Try adjusting your filters.")
 
@@ -459,10 +467,11 @@ if not df.empty:
         else:
             return "background-color: #ffcdd2; color: #c62828"
     
+    # Build styled dataframe (using .map instead of deprecated .applymap)
+    styled_df = df.style.map(color_side, subset=["side"]).map(color_priority, subset=["priority"])
+    
     # Display styled dataframe
-    styled_df = df.style.applymap(color_side, subset=["side"]) \
-                        .applymap(color_priority, subset=["priority"])
-    st.dataframe(styled_df, use_container_width=True, hide_index=True)
+    st.dataframe(styled_df, hide_index=True)
 else:
     st.info("No guests to display")
 
