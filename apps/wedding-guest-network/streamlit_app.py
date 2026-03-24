@@ -22,6 +22,11 @@ _GUESTS_FILE = pathlib.Path(__file__).parent / "guests.json"
 with open(_GUESTS_FILE, "r", encoding="utf-8") as _f:
     GUEST_INITIAL = json.load(_f)
 
+# Normalize: migrate old "group" (string) → "groups" (list) if needed
+for _g in GUEST_INITIAL:
+    if "groups" not in _g:
+        _g["groups"] = [_g.pop("group")] if "group" in _g else []
+
 # =============================================================================
 # COLOR SCHEME
 # =============================================================================
