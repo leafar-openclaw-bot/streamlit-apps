@@ -475,7 +475,7 @@ if not df.empty:
     styled_df = df.style.map(color_side, subset=["side"]).map(color_priority, subset=["priority"])
     
     # Display styled dataframe
-    st.dataframe(styled_df, hide_index=True, width=None)
+    st.dataframe(styled_df, hide_index=True)
 else:
     st.info("No guests to display")
 
