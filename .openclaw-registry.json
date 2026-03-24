@@ -1,0 +1,13 @@
+{
+  "created": "2026-03-24T01:33:33.957848+00:00",
+  "skill_version": "1.0.0",
+  "apps": {
+    "wedding-guest-network": {
+      "slug": "wedding-guest-network",
+      "url": "https://wedding-guest-network.streamlit.app",
+      "description": "Interactive social graph for wedding guest management with color-coded clusters and priority system",
+      "created": "2026-03-24T01:41:00Z",
+      "last_updated": "2026-03-24T01:41:00Z"
+    }
+  }
+}
