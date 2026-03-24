@@ -1,162 +1,150 @@
 """
-Wedding Guest Network Visualizer
-Interactive D3.js force-directed graph for wedding guest management.
+Wedding Guest Network Visualizer v3
+D3.js force graph with group cluster nodes (squares) + bidirectional selection.
 Built by OpenClaw 🦞
 """
-# v2.0.0 — D3.js visualization (PyVis removed)
+# v3.2.0 — Clean bidirectional selection via hidden form + data_editor
 
 import streamlit as st
 import pandas as pd
 import json
+import math
 
-st.set_page_config(
-    page_title="Wedding Guest Network",
-    page_icon="💒",
-    layout="wide",
-)
+st.set_page_config(page_title="Wedding Guest Network", page_icon="💒", layout="wide")
 
 # =============================================================================
 # GUEST DATA
 # =============================================================================
 
-def get_initial_guests():
-    guests = [
-        # Rafael's Family
-        {"name": "José (Rafa's Dad)", "side": "Rafael", "group": "Family", "priority": "High", "notes": "Father"},
-        {"name": "Ana Maria (Rafa's Mom)", "side": "Rafael", "group": "Family", "priority": "High", "notes": "Mother"},
-        {"name": "João Francisco", "side": "Rafael", "group": "Family", "priority": "High", "notes": "Brother"},
-        {"name": "Ana Cristima", "side": "Rafael", "group": "Family", "priority": "High", "notes": "Sister"},
-        {"name": "Tiago Paula", "side": "Rafael", "group": "Family", "priority": "High", "notes": "Brother-in-law"},
-        {"name": "Tia Luz", "side": "Rafael", "group": "Family", "priority": "Medium", "notes": ""},
-        {"name": "Joao Pedro", "side": "Rafael", "group": "Family", "priority": "Medium", "notes": "Cousin"},
-        {"name": "Madalena", "side": "Rafael", "group": "Family", "priority": "Medium", "notes": "Cousin"},
-        {"name": "Tio Luis", "side": "Rafael", "group": "Family", "priority": "Medium", "notes": ""},
-        {"name": "Teresa", "side": "Rafael", "group": "Family", "priority": "Medium", "notes": ""},
-        {"name": "Deicy", "side": "Rafael", "group": "Family", "priority": "Low", "notes": "Cousin"},
-        # Rafael's Friends - Basic School
-        {"name": "Jeenal", "side": "Rafael", "group": "Basic School", "priority": "Medium", "notes": ""},
-        {"name": "João Carlos", "side": "Rafael", "group": "Basic School", "priority": "Medium", "notes": ""},
-        {"name": "Bruno", "side": "Rafael", "group": "Basic School", "priority": "High", "notes": "+ Tânia (plus-one)"},
-        {"name": "Tânia", "side": "Rafael", "group": "Basic School", "priority": "Medium", "notes": "Plus-one of Bruno"},
-        {"name": "Sofia Cotrim", "side": "Rafael", "group": "Basic School", "priority": "Medium", "notes": ""},
-        {"name": "Tiago Luzio", "side": "Rafael", "group": "Basic School", "priority": "Medium", "notes": ""},
-        # Rafael's Friends - Secondary School
-        {"name": "André Miranda", "side": "Rafael", "group": "Secondary School", "priority": "High", "notes": ""},
-        # Rafael's Friends - University
-        {"name": "Manuel Madeira", "side": "Rafael", "group": "University", "priority": "High", "notes": ""},
-        {"name": "Tiago Rodrigues", "side": "Rafael", "group": "University", "priority": "High", "notes": "Also common friend"},
-        {"name": "Salomé", "side": "Rafael", "group": "University", "priority": "High", "notes": ""},
-        {"name": "Carlota Santos", "side": "Rafael", "group": "University", "priority": "High", "notes": "+ boyfriend"},
-        {"name": "Margarida Pinho", "side": "Rafael", "group": "University", "priority": "Medium", "notes": ""},
-        {"name": "Margarida Lopes", "side": "Rafael", "group": "University", "priority": "Medium", "notes": ""},
-        {"name": "Maria Folque", "side": "Rafael", "group": "University", "priority": "High", "notes": ""},
-        # Rafael's Friends - Reboleira/Parish
-        {"name": "Inês Viegas", "side": "Rafael", "group": "Reboleira Parish", "priority": "Medium", "notes": ""},
-        {"name": "Sara Miranda", "side": "Rafael", "group": "Reboleira Parish", "priority": "Medium", "notes": "+ boyfriend"},
-        {"name": "Beatriz Quaresma", "side": "Rafael", "group": "Reboleira Parish", "priority": "Medium", "notes": ""},
-        {"name": "João Roberto", "side": "Rafael", "group": "Reboleira Parish", "priority": "Low", "notes": ""},
-        # Erasmus Milan
-        {"name": "David Vambrout", "side": "Rafael", "group": "Erasmus Milan", "priority": "High", "notes": "Milan, Italy"},
-        {"name": "Ann-Kathrin", "side": "Rafael", "group": "Erasmus Milan", "priority": "Medium", "notes": "Milan, Italy"},
-        {"name": "Eva", "side": "Rafael", "group": "Erasmus Milan", "priority": "Medium", "notes": "Milan, Italy"},
-        # Erasmus Netherlands
-        {"name": "Hilde", "side": "Rafael", "group": "Erasmus Netherlands", "priority": "Medium", "notes": "Netherlands"},
-        {"name": "Maud", "side": "Rafael", "group": "Erasmus Netherlands", "priority": "Medium", "notes": "Netherlands"},
-        {"name": "Staan", "side": "Rafael", "group": "Erasmus Netherlands", "priority": "Medium", "notes": "Netherlands"},
-        {"name": "Julie Wallet", "side": "Rafael", "group": "Erasmus Netherlands", "priority": "High", "notes": "+ Ettiene + 2 children"},
-        {"name": "Ettiene Wallet", "side": "Rafael", "group": "Erasmus Netherlands", "priority": "High", "notes": "+ Julie + 2 children"},
-        {"name": "Vinish Yogesh", "side": "Rafael", "group": "Erasmus Netherlands", "priority": "Medium", "notes": "+ wife"},
-        # Work - Planos Ótimos
-        {"name": "Rafael Andrade", "side": "Rafael", "group": "Work (Planos Ótimos)", "priority": "Medium", "notes": ""},
-        {"name": "Nuno Afonso", "side": "Rafael", "group": "Work (Planos Ótimos)", "priority": "Medium", "notes": ""},
-        {"name": "Susana Balhico", "side": "Rafael", "group": "Work (Planos Ótimos)", "priority": "Low", "notes": ""},
-        {"name": "Raquel Ganilho", "side": "Rafael", "group": "Work (Planos Ótimos)", "priority": "Low", "notes": ""},
-        {"name": "Mariana Ganilho", "side": "Rafael", "group": "Work (Planos Ótimos)", "priority": "Medium", "notes": "+ Duarte Calado"},
-        {"name": "Duarte Calado", "side": "Rafael", "group": "Work (Planos Ótimos)", "priority": "Medium", "notes": ""},
-        {"name": "Isabel Gala", "side": "Rafael", "group": "Work (Planos Ótimos)", "priority": "Low", "notes": ""},
-        {"name": "José Mesquita Guimarães", "side": "Rafael", "group": "Work (Planos Ótimos)", "priority": "Low", "notes": ""},
-        {"name": "Rafael Mesquita Guimarães", "side": "Rafael", "group": "Work (Planos Ótimos)", "priority": "Low", "notes": ""},
-        {"name": "Maria Mesquita Guimarães", "side": "Rafael", "group": "Work (Planos Ótimos)", "priority": "Low", "notes": ""},
-        {"name": "Beatriz Barros", "side": "Rafael", "group": "Work (Planos Ótimos)", "priority": "Low", "notes": ""},
-        {"name": "Mariana Camarneiro", "side": "Rafael", "group": "Work (Planos Ótimos)", "priority": "Low", "notes": ""},
-        {"name": "Sofia Camarneiro", "side": "Rafael", "group": "Work (Planos Ótimos)", "priority": "Low", "notes": ""},
-        {"name": "Bernardo Neuville", "side": "Rafael", "group": "Work (Planos Ótimos)", "priority": "Low", "notes": ""},
-        {"name": "Jaona Silvano", "side": "Rafael", "group": "Work (Planos Ótimos)", "priority": "Low", "notes": ""},
-        {"name": "Leonor Freitas do Amaral", "side": "Rafael", "group": "Work (Planos Ótimos)", "priority": "Low", "notes": ""},
-        {"name": "Luis Tovar", "side": "Rafael", "group": "Work (Planos Ótimos)", "priority": "Low", "notes": ""},
-        {"name": "Miguel Sousa", "side": "Rafael", "group": "Work (Planos Ótimos)", "priority": "Low", "notes": ""},
-        {"name": "Miriam Sculco", "side": "Rafael", "group": "Work (Planos Ótimos)", "priority": "Low", "notes": ""},
-        {"name": "Maria Ana Pacheco", "side": "Rafael", "group": "Work (Planos Ótimos)", "priority": "Low", "notes": ""},
-        # Work - Sonant
-        {"name": "Zé Pedro Cruz Fernandes", "side": "Rafael", "group": "Work (Sonant)", "priority": "Medium", "notes": ""},
-        {"name": "Pedro Correia", "side": "Rafael", "group": "Work (Sonant)", "priority": "Medium", "notes": ""},
-        {"name": "Pedro Henriques", "side": "Rafael", "group": "Work (Sonant)", "priority": "Medium", "notes": ""},
-        {"name": "Juliana Vareda", "side": "Rafael", "group": "Work (Sonant)", "priority": "Low", "notes": ""},
-        {"name": "Gonçalo Canhoto", "side": "Rafael", "group": "Work (Sonant)", "priority": "Low", "notes": ""},
-        {"name": "Leandro Duarte", "side": "Rafael", "group": "Work (Sonant)", "priority": "Low", "notes": ""},
-        # Common Friends
-        {"name": "Tiago Rodrigues", "side": "Common", "group": "Common Friends", "priority": "High", "notes": "Rafael & Catarina's friend"},
-        {"name": "Graça Rodrigues", "side": "Common", "group": "Common Friends", "priority": "High", "notes": "Rafael & Catarina's friend"},
-        # Special / Reciprocity
-        {"name": "Irmãs Condesso", "side": "Rafael", "group": "Special (Reciprocity)", "priority": "Low", "notes": "Past wedding invite"},
-        {"name": "João Araújo", "side": "Rafael", "group": "Special (Reciprocity)", "priority": "Low", "notes": "+ wife"},
-        {"name": "Guilherme", "side": "Rafael", "group": "Special (Reciprocity)", "priority": "Low", "notes": "+ Madalena"},
-        {"name": "Madalena", "side": "Rafael", "group": "Special (Reciprocity)", "priority": "Low", "notes": ""},
-        # Catarina placeholder entries
-        {"name": "Catarina's Parents", "side": "Catarina", "group": "Family", "priority": "High", "notes": "To be specified"},
-        {"name": "Catarina's Siblings", "side": "Catarina", "group": "Family", "priority": "High", "notes": "To be specified"},
-        {"name": "Catarina's Friend 1", "side": "Catarina", "group": "Friends", "priority": "Medium", "notes": "To be specified"},
-        {"name": "Catarina's Friend 2", "side": "Catarina", "group": "Friends", "priority": "Medium", "notes": "To be specified"},
-        {"name": "Catarina's University Friends", "side": "Catarina", "group": "University", "priority": "Medium", "notes": "To be specified"},
-        {"name": "Catarina's Work Friends", "side": "Catarina", "group": "Work", "priority": "Low", "notes": "To be specified"},
-    ]
-    return guests
+GUEST_INITIAL = [
+    {"name": "José (Rafa's Dad)", "side": "Rafael", "groups": ["Family"], "priority": "High", "notes": "Father"},
+    {"name": "Ana Maria (Rafa's Mom)", "side": "Rafael", "groups": ["Family"], "priority": "High", "notes": "Mother"},
+    {"name": "João Francisco", "side": "Rafael", "groups": ["Family"], "priority": "High", "notes": "Brother"},
+    {"name": "Ana Cristima", "side": "Rafael", "groups": ["Family"], "priority": "High", "notes": "Sister"},
+    {"name": "Tiago Paula", "side": "Rafael", "groups": ["Family"], "priority": "High", "notes": "Brother-in-law"},
+    {"name": "Tia Luz", "side": "Rafael", "groups": ["Family"], "priority": "Medium", "notes": ""},
+    {"name": "Joao Pedro", "side": "Rafael", "groups": ["Family"], "priority": "Medium", "notes": "Cousin"},
+    {"name": "Madalena", "side": "Rafael", "groups": ["Family"], "priority": "Medium", "notes": "Cousin"},
+    {"name": "Tio Luis", "side": "Rafael", "groups": ["Family"], "priority": "Medium", "notes": ""},
+    {"name": "Teresa", "side": "Rafael", "groups": ["Family"], "priority": "Medium", "notes": ""},
+    {"name": "Deicy", "side": "Rafael", "groups": ["Family"], "priority": "Low", "notes": "Cousin"},
+    {"name": "Jeenal", "side": "Rafael", "groups": ["Basic School"], "priority": "Medium", "notes": ""},
+    {"name": "João Carlos", "side": "Rafael", "groups": ["Basic School"], "priority": "Medium", "notes": ""},
+    {"name": "Bruno", "side": "Rafael", "groups": ["Basic School"], "priority": "High", "notes": "+ Tânia (plus-one)"},
+    {"name": "Tânia", "side": "Rafael", "groups": ["Basic School"], "priority": "Medium", "notes": "Plus-one of Bruno"},
+    {"name": "Sofia Cotrim", "side": "Rafael", "groups": ["Basic School"], "priority": "Medium", "notes": ""},
+    {"name": "Tiago Luzio", "side": "Rafael", "groups": ["Basic School"], "priority": "Medium", "notes": ""},
+    {"name": "André Miranda", "side": "Rafael", "groups": ["Secondary School"], "priority": "High", "notes": ""},
+    {"name": "Manuel Madeira", "side": "Rafael", "groups": ["University"], "priority": "High", "notes": ""},
+    {"name": "Tiago Rodrigues", "side": "Rafael", "groups": ["University"], "priority": "High", "notes": "Also common friend"},
+    {"name": "Tiago Rodrigues (Common)", "side": "Common", "groups": ["Common Friends"], "priority": "High", "notes": "Rafael & Catarina's friend"},
+    {"name": "Salomé", "side": "Rafael", "groups": ["University"], "priority": "High", "notes": ""},
+    {"name": "Carlota Santos", "side": "Rafael", "groups": ["University"], "priority": "High", "notes": "+ boyfriend"},
+    {"name": "Margarida Pinho", "side": "Rafael", "groups": ["University"], "priority": "Medium", "notes": ""},
+    {"name": "Margarida Lopes", "side": "Rafael", "groups": ["University"], "priority": "Medium", "notes": ""},
+    {"name": "Maria Folque", "side": "Rafael", "groups": ["University"], "priority": "High", "notes": ""},
+    {"name": "Inês Viegas", "side": "Rafael", "groups": ["Reboleira Parish"], "priority": "Medium", "notes": ""},
+    {"name": "Sara Miranda", "side": "Rafael", "groups": ["Reboleira Parish"], "priority": "Medium", "notes": "+ boyfriend"},
+    {"name": "Beatriz Quaresma", "side": "Rafael", "groups": ["Reboleira Parish"], "priority": "Medium", "notes": ""},
+    {"name": "João Roberto", "side": "Rafael", "groups": ["Reboleira Parish"], "priority": "Low", "notes": ""},
+    {"name": "David Vambrout", "side": "Rafael", "groups": ["Erasmus Milan"], "priority": "High", "notes": "Milan, Italy"},
+    {"name": "Ann-Kathrin", "side": "Rafael", "groups": ["Erasmus Milan"], "priority": "Medium", "notes": "Milan, Italy"},
+    {"name": "Eva", "side": "Rafael", "groups": ["Erasmus Milan"], "priority": "Medium", "notes": "Milan, Italy"},
+    {"name": "Hilde", "side": "Rafael", "groups": ["Erasmus Netherlands"], "priority": "Medium", "notes": "Netherlands"},
+    {"name": "Maud", "side": "Rafael", "groups": ["Erasmus Netherlands"], "priority": "Medium", "notes": "Netherlands"},
+    {"name": "Staan", "side": "Rafael", "groups": ["Erasmus Netherlands"], "priority": "Medium", "notes": "Netherlands"},
+    {"name": "Julie Wallet", "side": "Rafael", "groups": ["Erasmus Netherlands"], "priority": "High", "notes": "+ Ettiene + 2 children"},
+    {"name": "Ettiene Wallet", "side": "Rafael", "groups": ["Erasmus Netherlands"], "priority": "High", "notes": "+ Julie + 2 children"},
+    {"name": "Vinish Yogesh", "side": "Rafael", "groups": ["Erasmus Netherlands"], "priority": "Medium", "notes": "+ wife"},
+    {"name": "Rafael Andrade", "side": "Rafael", "groups": ["Work (Planos Ótimos)"], "priority": "Medium", "notes": ""},
+    {"name": "Nuno Afonso", "side": "Rafael", "groups": ["Work (Planos Ótimos)"], "priority": "Medium", "notes": ""},
+    {"name": "Susana Balhico", "side": "Rafael", "groups": ["Work (Planos Ótimos)"], "priority": "Low", "notes": ""},
+    {"name": "Raquel Ganilho", "side": "Rafael", "groups": ["Work (Planos Ótimos)"], "priority": "Low", "notes": ""},
+    {"name": "Mariana Ganilho", "side": "Rafael", "groups": ["Work (Planos Ótimos)"], "priority": "Medium", "notes": "+ Duarte Calado"},
+    {"name": "Duarte Calado", "side": "Rafael", "groups": ["Work (Planos Ótimos)"], "priority": "Medium", "notes": ""},
+    {"name": "Isabel Gala", "side": "Rafael", "groups": ["Work (Planos Ótimos)"], "priority": "Low", "notes": ""},
+    {"name": "José Mesquita Guimarães", "side": "Rafael", "groups": ["Work (Planos Ótimos)"], "priority": "Low", "notes": ""},
+    {"name": "Rafael Mesquita Guimarães", "side": "Rafael", "groups": ["Work (Planos Ótimos)"], "priority": "Low", "notes": ""},
+    {"name": "Maria Mesquita Guimarães", "side": "Rafael", "groups": ["Work (Planos Ótimos)"], "priority": "Low", "notes": ""},
+    {"name": "Beatriz Barros", "side": "Rafael", "groups": ["Work (Planos Ótimos)"], "priority": "Low", "notes": ""},
+    {"name": "Mariana Camarneiro", "side": "Rafael", "groups": ["Work (Planos Ótimos)"], "priority": "Low", "notes": ""},
+    {"name": "Sofia Camarneiro", "side": "Rafael", "groups": ["Work (Planos Ótimos)"], "priority": "Low", "notes": ""},
+    {"name": "Bernardo Neuville", "side": "Rafael", "groups": ["Work (Planos Ótimos)"], "priority": "Low", "notes": ""},
+    {"name": "Jaona Silvano", "side": "Rafael", "groups": ["Work (Planos Ótimos)"], "priority": "Low", "notes": ""},
+    {"name": "Leonor Freitas do Amaral", "side": "Rafael", "groups": ["Work (Planos Ótimos)"], "priority": "Low", "notes": ""},
+    {"name": "Luis Tovar", "side": "Rafael", "groups": ["Work (Planos Ótimos)"], "priority": "Low", "notes": ""},
+    {"name": "Miguel Sousa", "side": "Rafael", "groups": ["Work (Planos Ótimos)"], "priority": "Low", "notes": ""},
+    {"name": "Miriam Sculco", "side": "Rafael", "groups": ["Work (Planos Ótimos)"], "priority": "Low", "notes": ""},
+    {"name": "Maria Ana Pacheco", "side": "Rafael", "groups": ["Work (Planos Ótimos)"], "priority": "Low", "notes": ""},
+    {"name": "Zé Pedro Cruz Fernandes", "side": "Rafael", "groups": ["Work (Sonant)"], "priority": "Medium", "notes": ""},
+    {"name": "Pedro Correia", "side": "Rafael", "groups": ["Work (Sonant)"], "priority": "Medium", "notes": ""},
+    {"name": "Pedro Henriques", "side": "Rafael", "groups": ["Work (Sonant)"], "priority": "Medium", "notes": ""},
+    {"name": "Juliana Vareda", "side": "Rafael", "groups": ["Work (Sonant)"], "priority": "Low", "notes": ""},
+    {"name": "Gonçalo Canhoto", "side": "Rafael", "groups": ["Work (Sonant)"], "priority": "Low", "notes": ""},
+    {"name": "Leandro Duarte", "side": "Rafael", "groups": ["Work (Sonant)"], "priority": "Low", "notes": ""},
+    {"name": "Graça Rodrigues", "side": "Common", "groups": ["Common Friends"], "priority": "High", "notes": "Rafael & Catarina's friend"},
+    {"name": "Irmãs Condesso", "side": "Rafael", "groups": ["Special (Reciprocity)"], "priority": "Low", "notes": "Past wedding invite"},
+    {"name": "João Araújo", "side": "Rafael", "groups": ["Special (Reciprocity)"], "priority": "Low", "notes": "+ wife"},
+    {"name": "Guilherme", "side": "Rafael", "groups": ["Special (Reciprocity)"], "priority": "Low", "notes": "+ Madalena"},
+    {"name": "Madalena", "side": "Rafael", "groups": ["Special (Reciprocity)", "Family"], "priority": "Low", "notes": ""},
+    # Catarina placeholders
+    {"name": "Catarina's Parents", "side": "Catarina", "groups": ["Family"], "priority": "High", "notes": "To be specified"},
+    {"name": "Catarina's Siblings", "side": "Catarina", "groups": ["Family"], "priority": "High", "notes": "To be specified"},
+    {"name": "Catarina's Friend 1", "side": "Catarina", "groups": ["Friends"], "priority": "Medium", "notes": "To be specified"},
+    {"name": "Catarina's Friend 2", "side": "Catarina", "groups": ["Friends"], "priority": "Medium", "notes": "To be specified"},
+    {"name": "Catarina's University Friends", "side": "Catarina", "groups": ["University"], "priority": "Medium", "notes": "To be specified"},
+    {"name": "Catarina's Work Friends", "side": "Catarina", "groups": ["Work"], "priority": "Low", "notes": "To be specified"},
+]
+
+# Deduplicate
+_seen = set()
+GUEST_DEDUPED = []
+for g in GUEST_INITIAL:
+    if g["name"] not in _seen:
+        _seen.add(g["name"])
+        GUEST_DEDUPED.append(g)
 
 # =============================================================================
 # COLOR SCHEME
 # =============================================================================
 
-COLOR_SCHEME = {
-    "Rafael": {
-        "Family": "#1E88E5",
-        "Basic School": "#42A5F5",
-        "Secondary School": "#2196F3",
-        "University": "#1976D2",
-        "Reboleira Parish": "#64B5F6",
-        "Erasmus Milan": "#0D47A1",
-        "Erasmus Netherlands": "#1565C0",
-        "Work (Planos Ótimos)": "#90CAF9",
-        "Work (Sonant)": "#BBDEFB",
-        "Special (Reciprocity)": "#3F51B5",
-    },
-    "Catarina": {
-        "Family": "#E91E63",
-        "Friends": "#F48FB1",
-        "University": "#D81B60",
-        "Work": "#F8BBD9",
-    },
-    "Common": {
-        "Common Friends": "#9C27B0",
-    },
+GROUP_COLORS = {
+    "Family": "#1565C0",
+    "Basic School": "#1E88E5",
+    "Secondary School": "#2196F3",
+    "University": "#1976D2",
+    "Reboleira Parish": "#42A5F5",
+    "Erasmus Milan": "#0D47A1",
+    "Erasmus Netherlands": "#1565C0",
+    "Work (Planos Ótimos)": "#64B5F6",
+    "Work (Sonant)": "#90CAF9",
+    "Special (Reciprocity)": "#3F51B5",
+    "Friends": "#E91E63",
+    "Work": "#F48FB1",
+    "Common Friends": "#7B1FA2",
 }
 
-def get_color(side, group):
-    if side == "Common":
-        return COLOR_SCHEME["Common"].get(group, "#9C27B0")
-    elif side == "Rafael":
-        return COLOR_SCHEME["Rafael"].get(group, "#2196F3")
-    elif side == "Catarina":
-        return COLOR_SCHEME["Catarina"].get(group, "#E91E63")
-    return "#757575"
+def get_group_color(g):
+    return GROUP_COLORS.get(g, "#757575")
 
-PRIORITY_SIZE = {"High": 16, "Medium": 11, "Low": 7}
+PRIORITY_SIZE = {"High": 14, "Medium": 10, "Low": 6}
+
+ALL_GROUPS = sorted([
+    "Family", "Basic School", "Secondary School", "University",
+    "Reboleira Parish", "Erasmus Milan", "Erasmus Netherlands",
+    "Work (Planos Ótimos)", "Work (Sonant)", "Special (Reciprocity)",
+    "Friends", "Common Friends", "Work", "Other"
+])
 
 # =============================================================================
 # SESSION STATE
 # =============================================================================
 
 if "guests" not in st.session_state:
-    st.session_state.guests = get_initial_guests()
+    st.session_state.guests = GUEST_DEDUPED
+
+if "selected_guest" not in st.session_state:
+    st.session_state.selected_guest = None
 
 # =============================================================================
 # SIDEBAR
@@ -165,292 +153,433 @@ if "guests" not in st.session_state:
 with st.sidebar:
     st.title("💒 Guest Management")
 
+    # Add Guest
     with st.form("add_guest_form", clear_on_submit=True):
         st.subheader("➕ Add New Guest")
         new_name = st.text_input("Name", placeholder="Full name", label_visibility="collapsed")
         new_side = st.selectbox("Side", ["Rafael", "Catarina", "Common"])
-        new_group = st.selectbox("Group", [
-            "Family", "Basic School", "Secondary School", "University",
-            "Reboleira Parish", "Erasmus Milan", "Erasmus Netherlands",
-            "Work (Planos Ótimos)", "Work (Sonant)", "Friends",
-            "Common Friends", "Special (Reciprocity)", "Other"
-        ])
+        new_groups = st.multiselect("Groups", ALL_GROUPS, default=["Family"])
         new_priority = st.selectbox("Priority", ["High", "Medium", "Low"])
         new_notes = st.text_input("Notes", placeholder="Optional notes", label_visibility="collapsed")
-        submitted = st.form_submit_button("Add Guest")
-        if submitted and new_name:
-            st.session_state.guests.append({
-                "name": new_name, "side": new_side, "group": new_group,
-                "priority": new_priority, "notes": new_notes
-            })
-            st.success(f"✅ Added {new_name}")
+        add_submitted = st.form_submit_button("Add Guest")
+        if add_submitted and new_name:
+            names = [g["name"] for g in st.session_state.guests]
+            if new_name in names:
+                st.error(f"⚠️ {new_name} already exists!")
+            else:
+                st.session_state.guests.append({
+                    "name": new_name, "side": new_side, "groups": new_groups,
+                    "priority": new_priority, "notes": new_notes
+                })
+                st.success(f"✅ Added {new_name}")
 
     st.divider()
 
+    # Filters
     st.subheader("🔍 Filters")
     filter_side = st.multiselect("Side", ["Rafael", "Catarina", "Common"],
                                   default=["Rafael", "Catarina", "Common"])
     filter_priority = st.multiselect("Priority", ["High", "Medium", "Low"],
-                                      default=["High", "Medium", "Low"])
-    all_groups = sorted(set(g["group"] for g in st.session_state.guests))
-    filter_group = st.multiselect("Group", all_groups, default=all_groups)
+                                     default=["High", "Medium", "Low"])
+    filter_group = st.multiselect("Group", ALL_GROUPS, default=ALL_GROUPS)
 
     st.divider()
+
+    # Stats
     st.subheader("📊 Statistics")
     total = len(st.session_state.guests)
     high = len([g for g in st.session_state.guests if g["priority"] == "High"])
     rafael_n = len([g for g in st.session_state.guests if g["side"] == "Rafael"])
     Catarina_n = len([g for g in st.session_state.guests if g["side"] == "Catarina"])
     common_n = len([g for g in st.session_state.guests if g["side"] == "Common"])
-    st.metric("Total Guests", total)
+    st.metric("Total", total)
     st.metric("High Priority", high)
     col1, col2 = st.columns(2)
     with col1: st.metric("🔵 Rafael", rafael_n)
     with col2: st.metric("🩷 Catarina", Catarina_n)
     st.metric("🟣 Common", common_n)
 
+    st.divider()
+
+    # Edit Panel
+    selected = st.session_state.selected_guest
+    if selected:
+        st.subheader(f"✏️ Edit: {selected['name']}")
+        real = next((g for g in st.session_state.guests if g["name"] == selected["name"]), None)
+        if real:
+            with st.form("edit_form", clear_on_submit=True):
+                edit_priority = st.selectbox("Priority", ["High", "Medium", "Low"],
+                                              index=["High", "Medium", "Low"].index(real["priority"]))
+                edit_groups = st.multiselect("Groups", ALL_GROUPS, default=real["groups"])
+                edit_notes = st.text_input("Notes", value=real["notes"], label_visibility="collapsed")
+                c1, c2 = st.columns(2)
+                save_btn = c1.form_submit_button("💾 Save")
+                del_btn = c2.form_submit_button("🗑️ Delete", type="secondary")
+                if save_btn:
+                    real["priority"] = edit_priority
+                    real["groups"] = edit_groups
+                    real["notes"] = edit_notes
+                    st.success("💾 Saved!")
+                    st.session_state.selected_guest = None
+                    st.rerun()
+                if del_btn:
+                    st.session_state.guests = [g for g in st.session_state.guests if g["name"] != real["name"]]
+                    st.success(f"🗑️ Deleted {real['name']}")
+                    st.session_state.selected_guest = None
+                    st.rerun()
+        else:
+            st.warning("Guest not found.")
+            if st.button("Clear selection"):
+                st.session_state.selected_guest = None
+                st.rerun()
+    else:
+        st.subheader("✏️ Edit Guest")
+        st.caption("Click a node or row to edit")
+
 # =============================================================================
 # MAIN
 # =============================================================================
 
 st.title("💒 Wedding Guest Network")
-st.caption("Interactive social graph — drag nodes to rearrange · hover for details")
+st.caption("🟠 Squares = social life events (fixed clusters) · ● Circles = people (draggable) · Click to select & edit")
 
-filtered_guests = [
+# Filter
+filtered = [
     g for g in st.session_state.guests
     if g["side"] in filter_side
     and g["priority"] in filter_priority
-    and g["group"] in filter_group
+    and any(grp in filter_group for grp in g["groups"])
 ]
 
-st.caption(f"Showing {len(filtered_guests)} of {len(st.session_state.guests)} guests")
+hl = st.session_state.selected_guest
+st.caption(f"Showing {len(filtered)} of {len(st.session_state.guests)} guests")
 
 # =============================================================================
-# D3.JS VISUALIZATION
+# D3 VISUALIZATION
 # =============================================================================
 
-def build_d3_html(guests):
-    """Build a self-contained D3.js force-directed graph as an inline HTML string."""
-
+def build_d3(guests, highlighted_name):
     nodes = []
     links = []
+    group_ids = []
 
-    # Rafael center node
-    nodes.append({
-        "id": "Rafael", "name": "Rafael", "label": "Rafael",
-        "side": "Rafael", "group": "Center", "priority": "High",
-        "notes": "Groom", "is_center": True, "size": 26, "color": "#0D47A1"
-    })
+    # Centers
+    nodes.append({"id": "__Rafael__", "name": "Rafael", "label": "Rafael",
+                  "type": "center", "side": "Rafael", "groups": [],
+                  "priority": "High", "notes": "Groom",
+                  "size": 32, "color": "#0D47A1"})
+    nodes.append({"id": "__Catarina__", "name": "Catarina", "label": "Catarina",
+                  "type": "center", "side": "Catarina", "groups": [],
+                  "priority": "High", "notes": "Bride",
+                  "size": 32, "color": "#AD1457"})
 
-    # Catarina center node
-    nodes.append({
-        "id": "Catarina", "name": "Catarina", "label": "Catarina",
-        "side": "Catarina", "group": "Center", "priority": "High",
-        "notes": "Bride", "is_center": True, "size": 26, "color": "#AD1457"
-    })
+    # Groups
+    all_grps = sorted(set(grp for g in guests for grp in g["groups"]))
+    rafael_grps = [g for g in all_grps if g not in ["Friends", "Work", "Common Friends"]]
+    Catarina_grps = [g for g in all_grps if g in ["Friends", "Work"]]
+    common_grps = [g for g in all_grps if "Common" in g]
 
-    # Add guest nodes and links
+    def fan_placement(groups_list, cx_ratio, cy, radius, start_a=-65, end_a=65):
+        result = {}
+        for i, g in enumerate(groups_list):
+            angle = start_a + (i / max(len(groups_list) - 1, 1)) * (end_a - start_a)
+            rad = math.pi * (0.5 + angle / 180)
+            result[g] = {"xr": cx_ratio, "yr": cy, "r": radius, "angle": angle}
+        return result
+
+    rafael_fan = fan_placement(rafael_grps, 0.22, 0.52, 210)
+    Catarina_fan = fan_placement(Catarina_grps, 0.78, 0.52, 190)
+    common_fan = {"Common Friends": {"xr": 0.5, "yr": 0.18, "r": 0, "angle": 0}}
+
+    all_fans = {**rafael_fan, **Catarina_fan, **common_fan}
+
+    for grp, pos in all_fans.items():
+        color = get_group_color(grp)
+        gid = f"__group__{grp}"
+        side = "Rafael" if grp not in ["Friends", "Work"] else "Catarina" if grp != "Common Friends" else "Common"
+        nodes.append({"id": gid, "name": grp, "label": grp, "type": "group",
+                      "side": side, "groups": [grp], "priority": "High", "notes": "",
+                      "size": 20, "color": color,
+                      "fx": pos["xr"], "fy": pos["yr"], "fixed": True})
+        group_ids.append(gid)
+
+    # People
     for g in guests:
         side = g["side"]
-        grp = g["group"]
-        size = PRIORITY_SIZE.get(g["priority"], 10)
-        color = get_color(side, grp)
+        size = PRIORITY_SIZE.get(g["priority"], 8)
+        primary = g["groups"][0] if g["groups"] else "Family"
+        color = get_group_color(primary)
+        is_hl = g["name"] == highlighted_name
 
-        if side == "Common":
-            links.append({"source": g["name"], "target": "Rafael", "color": "#9C27B0", "width": 1.5})
-            links.append({"source": g["name"], "target": "Catarina", "color": "#9C27B0", "width": 1.5})
-        elif side == "Rafael":
-            links.append({"source": g["name"], "target": "Rafael", "color": "#1E88E5", "width": 1})
+        nodes.append({"id": g["name"], "name": g["name"], "label": g["name"],
+                      "type": "person", "side": side, "groups": g["groups"],
+                      "priority": g["priority"], "notes": g["notes"],
+                      "size": size, "color": color,
+                      "fx": None, "fy": None, "highlighted": is_hl})
+
+        for grp in g["groups"]:
+            links.append({"source": g["name"], "target": f"__group__{grp}",
+                          "color": get_group_color(grp), "width": 0.9, "opacity": 0.4})
+
+        if side == "Rafael":
+            links.append({"source": g["name"], "target": "__Rafael__",
+                          "color": "#1565C0", "width": 0.4, "opacity": 0.15})
         elif side == "Catarina":
-            links.append({"source": g["name"], "target": "Catarina", "color": "#E91E63", "width": 1})
-
-        nodes.append({
-            "id": g["name"], "name": g["name"], "label": g["name"],
-            "side": side, "group": grp, "priority": g["priority"],
-            "notes": g["notes"], "is_center": False, "size": size, "color": color
-        })
+            links.append({"source": g["name"], "target": "__Catarina__",
+                          "color": "#AD1457", "width": 0.4, "opacity": 0.15})
+        elif side == "Common":
+            links.append({"source": g["name"], "target": "__Rafael__",
+                          "color": "#7B1FA2", "width": 0.5, "opacity": 0.2})
+            links.append({"source": g["name"], "target": "__Catarina__",
+                          "color": "#7B1FA2", "width": 0.5, "opacity": 0.2})
 
     nodes_json = json.dumps(nodes)
     links_json = json.dumps(links)
+    group_ids_json = json.dumps(group_ids)
+    hl_json = json.dumps(highlighted_name or "")
 
     html = f"""<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <style>
-    * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-    body {{ background: #0E1117; font-family: 'Segoe UI', Arial, sans-serif; overflow: hidden; }}
-    svg {{ width: 100%; height: 100vh; display: block; }}
-    .link {{ stroke-opacity: 0.55; fill: none; }}
-    .node circle {{ stroke: rgba(255,255,255,0.25); stroke-width: 1.5px; cursor: grab; transition: stroke 0.2s; }}
-    .node circle:hover {{ stroke: white; stroke-width: 2.5px; }}
-    .node text {{ font-size: 9px; fill: #cccccc; pointer-events: none; text-anchor: middle; dominant-baseline: middle; font-weight: 500; text-shadow: 0 1px 4px rgba(0,0,0,0.9); }}
-    .node.center circle {{ stroke: rgba(255,255,255,0.7); stroke-width: 3px; cursor: default; }}
-    .node.center text {{ font-size: 12px; font-weight: 700; fill: white; }}
-    #tooltip {{ position: fixed; background: rgba(14,14,24,0.97); border: 1px solid rgba(255,255,255,0.15); border-radius: 8px; padding: 10px 14px; font-size: 12px; color: #e0e0e0; pointer-events: none; opacity: 0; transition: opacity 0.15s; z-index: 9999; max-width: 240px; box-shadow: 0 4px 24px rgba(0,0,0,0.6); line-height: 1.6; }}
-    #tooltip b {{ color: white; font-size: 13px; }}
-    .tip-side {{ display: block; margin-bottom: 3px; font-weight: 600; }}
-    .tip-hi {{ color: #4CAF50; }} .tip-med {{ color: #FFC107; }} .tip-lo {{ color: #f44336; }}
-    #legend {{ position: fixed; bottom: 14px; left: 14px; background: rgba(14,17,23,0.88); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; padding: 10px 14px; font-size: 11px; color: #b0b0b0; z-index: 999; }}
-    .leg-title {{ font-weight: 700; color: white; margin-bottom: 6px; font-size: 12px; }}
-    .leg-item {{ display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }}
-    .leg-dot {{ width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }}
-    .leg-line {{ width: 18px; height: 2px; border-radius: 1px; flex-shrink: 0; }}
-  </style>
-</head>
-<body>
-  <svg id="graph"></svg>
-  <div id="tooltip">
-    <span class="tip-side" id="tt-side"></span>
-    <b id="tt-name"></b><br>
-    <span id="tt-group"></span><br>
-    Priority: <span id="tt-priority"></span><br>
-    <span id="tt-notes"></span>
-  </div>
-  <div id="legend">
-    <div class="leg-title">Legend</div>
-    <div class="leg-item"><div class="leg-dot" style="background:#0D47A1"></div> Rafael (Groom)</div>
-    <div class="leg-item"><div class="leg-dot" style="background:#AD1457"></div> Catarina (Bride)</div>
-    <div class="leg-item"><div class="leg-dot" style="background:#9C27B0"></div> Common Friends</div>
-    <div class="leg-item"><div class="leg-line" style="background:#1E88E5"></div> Rafael's connection</div>
-    <div class="leg-item"><div class="leg-line" style="background:#E91E63"></div> Catarina's connection</div>
-    <div class="leg-item"><div class="leg-line" style="background:#9C27B0"></div> Common friend link</div>
-  </div>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
-  <script>
-    const nodes = {nodes_json};
-    const links = {links_json};
+<html><head><meta charset="utf-8">
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:#0E1117;font-family:'Segoe UI',Arial,sans-serif;overflow:hidden}}
+svg{{width:100%;height:100vh;display:block}}
+.link{{fill:none}}
+.node-person circle{{stroke:rgba(255,255,255,0.2);stroke-width:1.5px;cursor:pointer;transition:stroke .15s}}
+.node-person:hover circle{{stroke:white;stroke-width:2.5px}}
+.node-person text{{font-size:7px;fill:#aaa;pointer-events:none;text-anchor:middle;dominant-baseline:middle;font-weight:400;text-shadow:0 1px 4px rgba(0,0,0,.9)}}
+.node-center circle{{stroke:rgba(255,255,255,.5);stroke-width:3px;cursor:grab}}
+.node-center text{{font-size:11px;fill:white;font-weight:700;text-shadow:0 1px 6px rgba(0,0,0,.8);pointer-events:none;text-anchor:middle;dominant-baseline:middle}}
+.node-group rect{{stroke-opacity:.6;stroke-width:2px;cursor:grab;fill-opacity:.7;rx:5}}
+.node-group text{{font-size:9px;fill:white;font-weight:600;pointer-events:none;text-anchor:middle;dominant-baseline:middle;text-shadow:0 1px 4px rgba(0,0,0,.8)}}
+.hl circle{{stroke:#FFD700!important;stroke-width:3.5px!important;filter:drop-shadow(0 0 8px #FFD700)!important}}
+.sel circle{{stroke:#00E5FF!important;stroke-width:3.5px!important;filter:drop-shadow(0 0 10px #00E5FF)!important}}
+#tooltip{{position:fixed;background:rgba(14,14,24,.97);border:1px solid rgba(255,255,255,.15);border-radius:8px;padding:10px 14px;font-size:12px;color:#e0e0e0;pointer-events:none;opacity:0;transition:opacity .15s;z-index:9999;max-width:260px;box-shadow:0 4px 24px rgba(0,0,0,.6);line-height:1.7}}
+#tooltip b{{color:white;font-size:13px}}
+.tip-hi{{color:#4CAF50}}.tip-med{{color:#FFC107}}.tip-lo{{color:#f44336}}
+#legend{{position:fixed;top:14px;right:14px;background:rgba(14,17,23,.88);border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:10px 14px;font-size:11px;color:#b0b0b0;z-index:999}}
+.lg{{font-weight:700;color:white;margin-bottom:6px}}
+.li{{display:flex;align-items:center;gap:7px;margin-bottom:3px}}
+.ld{{width:10px;height:10px;border-radius:50%;flex-shrink:0}}
+.ls{{width:10px;height:10px;border-radius:3px;flex-shrink:0}}
+</style></head><body>
+<svg id="graph"></svg>
+<div id="tooltip"><b id="tt-name"></b><br><span id="tt-info"></span><div style="font-size:10px;color:#888;margin-top:3px">Click to select</div></div>
+<div id="legend">
+  <div class="lg">Legend</div>
+  <div class="li"><div class="ls" style="background:#0D47A1"></div> 🔵 Rafael (Groom)</div>
+  <div class="li"><div class="ls" style="background:#AD1457"></div> 🩷 Catarina (Bride)</div>
+  <div class="li"><div class="ls" style="background:#7B1FA2"></div> 🟣 Common Friends</div>
+  <div class="li"><div class="ls" style="background:#F57F17;opacity:.8"></div> 🟠 Group (square = fixed)</div>
+  <div class="li"><div class="ld" style="background:#1976D2"></div> ● Person</div>
+  <div class="li"><div class="ld" style="background:#FFD700"></div> ⭐ Highlighted</div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+<script>
+const nodes = {nodes_json};
+const links = {links_json};
+const groupIds = {group_ids_json};
+const hlName = {hl_json} || null;
 
-    const W = window.innerWidth;
-    const H = window.innerHeight;
+function W(){{return window.innerWidth}}
+function H(){{return window.innerHeight}}
 
-    // Fixed center positions for the couple
-    const rafaelX = W * 0.3;
-    const CatarinaX = W * 0.7;
-    const centerY = H / 2;
+// Set fixed positions (ratios → pixels)
+nodes.forEach(n => {{
+  if(n.id==='__Rafael__'){{n.fx=W()*.25;n.fy=H()*.5;n.fixed=true}}
+  if(n.id==='__Catarina__'){{n.fx=W()*.75;n.fy=H()*.5;n.fixed=true}}
+}});
+groupIds.forEach(id => {{
+  const n=nodes.find(n=>n.id===id);
+  if(!n)return;
+  const xr=n.fx,yr=n.fy;
+  if(xr&&yr){{n.fx=xr*H();n.fy=yr*H();n.fixed=true}}
+}});
 
-    const allNodes = nodes.map(n => {{
-      if (n.id === 'Rafael') {{ n.fx = rafaelX; n.fy = centerY; }}
-      else if (n.id === 'Catarina') {{ n.fx = CatarinaX; n.fy = centerY; }}
-      return n;
-    }});
+const svg=d3.select("#graph");
+const sim=d3.forceSimulation(nodes)
+  .force("link",d3.forceLink(links).id(d=>d.id)
+    .distance(d=>{{
+      const s=d.source?.type||d.source?.id?.includes('__')?'group':'person';
+      const t=d.target?.type||d.target?.id?.includes('__')?'group':'person';
+      if(s==='group'||t==='group')return 95;
+      if(s==='center'||t==='center')return 140;
+      return 75;
+    }}).strength(.3))
+  .force("charge",d3.forceManyBody()
+    .strength(d=>{{if(d.type==='center')return-1200;if(d.type==='group')return-550;return-65}})
+    .distanceMax(400))
+  .force("center",d3.forceCenter(W()/2,H()/2).strength(.03))
+  .force("collision",d3.forceCollide().radius(d=>d.size+15).strength(.8))
+  .force("x",d3.forceX(W()/2).strength(d=>d.type==='center'?.3:d.type==='group'?.1:.008))
+  .force("y",d3.forceY(H()/2).strength(d=>d.type==='center'?.12:d.type==='group'?.08:.004))
+  .alphaDecay(.012).velocityDecay(.4);
 
-    const nodeMap = {{}};
-    allNodes.forEach(n => nodeMap[n.id] = n);
+const lnk=svg.append("g").selectAll("line").data(links).join("line")
+  .attr("class","link").attr("stroke",d=>d.color)
+  .attr("stroke-width",d=>d.width).attr("stroke-opacity",d=>d.opacity);
 
-    const svg = d3.select("#graph");
+// Group nodes (squares)
+const grpG=svg.append("g").selectAll("g").data(nodes.filter(d=>d.type==="group")).join("g")
+  .attr("class","node-group")
+  .call(d3.drag()
+    .on("start",(e,d)=>{{if(!e.active)sim.alphaTarget(.2).restart();d.fx=d.x;d.fy=d.y}})
+    .on("drag",(e,d)=>{{d.fx=e.x;d.fy=e.y}})
+    .on("end",(e,d)=>{{if(!e.active)sim.alphaTarget(0);d.fx=d.x;d.fy=d.y}}));
+grpG.append("rect")
+  .attr("x",d=>-(d.size+5)).attr("y",d=>-(d.size+5))
+  .attr("width",d=>(d.size+5)*2).attr("height",d=>(d.size+5)*2)
+  .attr("fill",d=>d.color).attr("stroke",d=>d.color);
+grpG.append("text").attr("dy",d=>d.size+14)
+  .text(d=>d.label.length>16?d.label.substring(0,14)+"…":d.label);
 
-    const simulation = d3.forceSimulation(allNodes)
-      .force("link", d3.forceLink(links).id(d => d.id).distance(d => d.source.id === 'Rafael' || d.source.id === 'Catarina' ? 140 : 65).strength(0.4))
-      .force("charge", d3.forceManyBody().strength(d => d.is_center ? -900 : -100).distanceMax(350))
-      .force("center", d3.forceCenter(W / 2, H / 2).strength(0.04))
-      .force("collision", d3.forceCollide().radius(d => d.size + 10).strength(0.7))
-      .force("x", d3.forceX(W / 2).strength(d => d.is_center ? 0.25 : 0.015))
-      .force("y", d3.forceY(H / 2).strength(d => d.is_center ? 0.08 : 0.008))
-      .alphaDecay(0.018)
-      .velocityDecay(0.35);
+// Person nodes (circles)
+const perG=svg.append("g").selectAll("g").data(nodes.filter(d=>d.type==="person")).join("g")
+  .attr("class",d=>"node-person"+(d.name===hlName?" hl":""))
+  .call(d3.drag()
+    .on("start",(e,d)=>{{if(!e.active)sim.alphaTarget(.25).restart();d.fx=d.x;d.fy=d.y}})
+    .on("drag",(e,d)=>{{d.fx=e.x;d.fy=e.y}})
+    .on("end",(e,d)=>{{if(!e.active)sim.alphaTarget(0);d.fx=null;d.fy=null}}));
+perG.append("circle").attr("r",d=>d.size).attr("fill",d=>d.color);
+perG.append("text").attr("dy",d=>(d.size||6)+11)
+  .text(d=>d.label.length>18?d.label.substring(0,16)+"…":d.label)
+  .style("display",d=>d.size>=10?"block":"none");
 
-    const link = svg.append("g").selectAll("line").data(links).join("line")
-      .attr("class", "link")
-      .attr("stroke", d => d.color || "#888")
-      .attr("stroke-width", d => d.width || 1);
+// Center nodes
+const cenG=svg.append("g").selectAll("g").data(nodes.filter(d=>d.type==="center")).join("g")
+  .attr("class",d=>"node-center"+(d.name===hlName?" hl":""))
+  .call(d3.drag()
+    .on("start",(e,d)=>{{if(!e.active)sim.alphaTarget(.25).restart();d.fx=d.x;d.fy=d.y}})
+    .on("drag",(e,d)=>{{d.fx=e.x;d.fy=e.y}})
+    .on("end",(e,d)=>{{if(!e.active)sim.alphaTarget(0);d.fx=d.x;d.fy=d.y}}));
+cenG.append("circle").attr("r",d=>d.size).attr("fill",d=>d.color)
+  .style("filter","drop-shadow(0 0 10px rgba(255,255,255,.4))");
+cenG.append("text").attr("dy",d=>d.size+14).text(d=>d.label);
 
-    const node = svg.append("g").selectAll("g").data(allNodes).join("g")
-      .attr("class", d => "node" + (d.is_center ? " center" : ""))
-      .call(d3.drag()
-        .on("start", (e, d) => {{ if (!d.is_center) {{ if (!e.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; }} }})
-        .on("drag", (e, d) => {{ if (!d.is_center) {{ d.fx = e.x; d.fy = e.y; }} }})
-        .on("end", (e, d) => {{ if (!d.is_center) {{ if (!e.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; }} }})
-      );
+// Tooltip
+const tt=document.getElementById("tooltip");
+const ttN=document.getElementById("tt-name"),ttI=document.getElementById("tt-info");
+perG.on("mouseover",(e,d)=>{{
+  tt.style.opacity="1";
+  ttN.textContent=d.name;
+  const pcls=d.priority==='High'?'tip-hi':d.priority==='Medium'?'tip-med':'tip-lo';
+  ttI.innerHTML=`Side:<b> ${{d.side}}</b> | Priority:<span class="${{pcls}}"> ${{d.priority}}</span><br>Groups:${{d.groups.join(', ')}}<br>${{d.notes||''}}`;
+}})
+.on("mousemove",e=>{{tt.style.left=(e.pageX+14)+"px";tt.style.top=(e.pageY-10)+"px"}})
+.on("mouseout",()=>{{tt.style.opacity="0"}});
 
-    node.append("circle")
-      .attr("r", d => d.size || 6)
-      .attr("fill", d => d.color || "#888")
-      .style("filter", d => d.is_center ? "drop-shadow(0 0 8px rgba(255,255,255,0.35))" : "none");
+// Click person → select
+perG.on("click",(e,d)=>{{
+  perG.classed("hl",n=>n.name===d.name);
+  cenG.classed("hl",n=>n.name===d.name);
+  // Send to parent (Streamlit) via postMessage
+  if(window.parent!==window){{try{{window.parent.postMessage({{type:"guest_select",guestName:d.name}}, "*")}}catch(e){{}}}}
+  tt.style.opacity="1";ttN.textContent=d.name;
+  const pcls=d.priority==='High'?'tip-hi':d.priority==='Medium'?'tip-med':'tip-lo';
+  ttI.innerHTML=`Side:<b> ${{d.side}}</b> | Priority:<span class="${{pcls}}"> ${{d.priority}}</span><br>Groups:${{d.groups.join(', ')}}<br>${{d.notes||''}}`;
+}});
 
-    node.append("text")
-      .attr("dy", d => (d.size || 6) + 11)
-      .text(d => d.label.length > 18 ? d.label.substring(0, 16) + "…" : d.label);
+// Click group → highlight people in that group
+grpG.on("click",(e,d)=>{{
+  perG.classed("hl",n=>n.groups.includes(d.name));
+  tt.style.opacity="1";ttN.textContent=d.name;
+  const cnt=nodes.filter(n=>n.type==="person"&&n.groups.includes(d.name)).length;
+  ttI.textContent=cnt+" people — click again to clear";
+}});
+grpG.on("mousemove",e=>{{tt.style.left=(e.pageX+14)+"px";tt.style.top=(e.pageY-10)+"px"}});
+grpG.on("mouseout",()=>{{tt.style.opacity="0"}});
 
-    const tooltip = document.getElementById("tooltip");
-    const ttSide = document.getElementById("tt-side");
-    const ttName = document.getElementById("tt-name");
-    const ttGroup = document.getElementById("tt-group");
-    const ttPriority = document.getElementById("tt-priority");
-    const ttNotes = document.getElementById("tt-notes");
+// Listen from parent (Streamlit table→graph)
+window.addEventListener("message",e=>{{
+  if(e.data?.type==="highlight"){{
+    perG.classed("hl",d=>d.name===e.data.guestName);
+    cenG.classed("hl",d=>d.name===e.data.guestName);
+  }}
+  if(e.data?.type==="clear"){{
+    perG.classed("hl",false);cenG.classed("hl",false);
+  }}
+}});
 
-    node.on("mouseover", function(event, d) {{
-      tooltip.style.opacity = "1";
-      const pClass = d.priority === 'High' ? 'tip-hi' : d.priority === 'Medium' ? 'tip-med' : 'tip-lo';
-      const emoji = d.side === 'Rafael' ? '🔵' : d.side === 'Catarina' ? '🩷' : '🟣';
-      const sideColor = d.side === 'Rafael' ? '#1E88E5' : d.side === 'Catarina' ? '#E91E63' : '#9C27B0';
-      ttSide.textContent = emoji + " " + d.side;
-      ttSide.style.color = sideColor;
-      ttName.textContent = d.name;
-      ttGroup.textContent = "Group: " + d.group;
-      ttPriority.textContent = d.priority;
-      ttPriority.className = pClass;
-      ttNotes.textContent = d.notes ? "Notes: " + d.notes : "";
-    }})
-    .on("mousemove", function(event) {{
-      tooltip.style.left = (event.pageX + 14) + "px";
-      tooltip.style.top = (event.pageY - 10) + "px";
-    }})
-    .on("mouseout", function() {{ tooltip.style.opacity = "0"; }});
+sim.on("tick",()=>{{
+  lnk.attr("x1",d=>d.source.x).attr("y1",d=>d.source.y)
+     .attr("x2",d=>d.target.x).attr("y2",d=>d.target.y);
+  grpG.attr("transform",d=>`translate(${{d.x}},${{d.y}})`);
+  perG.attr("transform",d=>`translate(${{d.x}},${{d.y}})`);
+  cenG.attr("transform",d=>`translate(${{d.x}},${{d.y}})`);
+}});
 
-    simulation.on("tick", () => {{
-      link
-        .attr("x1", d => d.source.x).attr("y1", d => d.source.y)
-        .attr("x2", d => d.target.x).attr("y2", d => d.target.y);
-      node.attr("transform", d => `translate(${{d.x}},${{d.y}})`);
-    }});
-
-    window.addEventListener("resize", () => {{
-      const w = window.innerWidth, h = window.innerHeight;
-      simulation.force("center", d3.forceCenter(w / 2, h / 2).strength(0.04));
-      allNodes.forEach(n => {{
-        if (n.id === 'Rafael') {{ n.fx = w * 0.3; n.fy = h / 2; }}
-        else if (n.id === 'Catarina') {{ n.fx = w * 0.7; n.fy = h / 2; }}
-      }});
-      simulation.alpha(0.25).restart();
-    }});
-  </script>
-</body>
-</html>"""
+window.addEventListener("resize",()=>{{
+  const w=W(),h=H();
+  sim.force("center",d3.forceCenter(w/2,h/2).strength(.03));
+  nodes.forEach(n=>{{
+    if(n.id==='__Rafael__'){{n.fx=w*.25;n.fy=h*.5}}
+    if(n.id==='__Catarina__'){{n.fx=w*.75;n.fy=h*.5}}
+  }});
+  sim.alpha(.2).restart();
+}});
+</script></body></html>"""
     return html
 
-if filtered_guests:
-    d3_html = build_d3_html(filtered_guests)
-    st.components.v1.html(d3_html, height=700, scrolling=False)
+# Render
+if filtered:
+    st.components.v1.html(build_d3(filtered, (st.session_state.selected_guest or {}).get("name")), height=720, scrolling=False)
 else:
     st.warning("No guests match the current filters.")
 
 # =============================================================================
-# GUEST TABLE
+# GUEST TABLE with clickable rows → bidirectional highlight
 # =============================================================================
 
 st.divider()
-st.subheader("📋 Guest List")
+st.subheader("📋 Guest List — click a row to select & edit")
 
-df = pd.DataFrame(filtered_guests)
-if not df.empty:
-    p_order = {"High": 0, "Medium": 1, "Low": 2}
-    df["_p"] = df["priority"].map(p_order)
-    df = df.sort_values(["side", "_p", "group", "name"]).drop("_p", axis=1)
+df_rows = []
+for g in filtered:
+    df_rows.append({
+        "Name": g["name"],
+        "Side": g["side"],
+        "Groups": ", ".join(g["groups"]),
+        "Priority": g["priority"],
+        "Notes": g["notes"]
+    })
 
-    def color_side(val):
-        if val == "Rafael": return "background:#bbdefb; color:#0d47a1"
-        if val == "Catarina": return "background:#f8bbd9; color:#ad1457"
-        return "background:#e1bee7; color:#7b1fa2"
-    def color_priority(val):
-        if val == "High": return "background:#c8e6c9; color:#2e7d32"
-        if val == "Medium": return "background:#fff9c4; color:#f57f17"
-        return "background:#ffcdd2; color:#c62828"
+if df_rows:
+    df_disp = pd.DataFrame(df_rows)
+    p_ord = {"High": 0, "Medium": 1, "Low": 2}
+    df_disp["_p"] = df_disp["Priority"].map(p_ord)
+    df_disp = df_disp.sort_values(["Side", "_p", "Groups", "Name"]).drop("_p", axis=1)
 
-    styled = df.style.map(color_side, subset=["side"]).map(color_priority, subset=["priority"])
+    # Style
+    def bg_name(val):
+        sel = st.session_state.selected_guest
+        if val == (sel or {}).get("name"):
+            return "background:#00E5FF;color:#003366;font-weight:bold"
+        return ""
+    def bg_pri(val):
+        if val == "High": return "background:#c8e6c9;color:#2e7d32"
+        if val == "Medium": return "background:#fff9c4;color:#f57f17"
+        return "background:#ffcdd2;color:#c62828"
+
+    styled = df_disp.style.map(bg_name, subset=["Name"]).map(bg_pri, subset=["Priority"])
     st.dataframe(styled, hide_index=True)
+
+    st.caption("Click a row to select it · Then use the Edit panel in the sidebar · Yellow = highlighted, Cyan = selected")
+
+    # Hidden form for D3 → Streamlit click bridge
+    with st.form("click_bridge", clear_on_submit=True):
+        clicked_name = st.text_input("Clicked guest (from graph)", value="", label_visibility="hidden", key="click_input")
+        submitted = st.form_submit_button("Select", disabled=True)
+        if clicked_name and clicked_name.strip():
+            # Find and select the guest
+            found = next((g for g in st.session_state.guests if g["name"] == clicked_name.strip()), None)
+            if found:
+                if st.session_state.selected_guest and st.session_state.selected_guest["name"] == found["name"]:
+                    st.session_state.selected_guest = None  # toggle off
+                else:
+                    st.session_state.selected_guest = found
+                st.rerun()
 else:
     st.info("No guests to display")
 
 st.divider()
-st.caption("💒 Built by OpenClaw 🦞 | Rafael & Catarina | v2.0.0 — D3.js visualization")
+st.caption("💒 Built by OpenClaw 🦞 | Rafael & Catarina | v3.2.0 — Group clusters + bidirectional selection")
