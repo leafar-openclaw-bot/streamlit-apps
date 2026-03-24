@@ -418,19 +418,23 @@ def build_network(guests, spring_length=150, spring_strength=0.01, physics=True)
 if filtered_guests:
     net = build_network(filtered_guests, spring_length, spring_strength, physics_enabled)
     
-    # Generate HTML - embed vis.js CDN for better compatibility
-    html = net.generate_html(notebook=False, open=False)
+    # Generate HTML
+    html = net.generate_html()
     
-    # Inject vis.js CDN for Streamlit Cloud compatibility
-    if "cdnjs" in html or "unpkg" in html or "jsdelivr" in html:
-        # Replace any existing CDN links with a reliable one
-        html = html.replace(
-            'src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"',
-            'src="https://cdnjs.cloudflare.com/ajax/libs/vis/4.21.0/vis-network.min.js"'
+    # Inject a reliable CDN for vis.js (some PyVis versions use broken/unavailable CDNs)
+    # This ensures the network graph renders in Streamlit Cloud
+    vis_cdn = 'https://cdnjs.cloudflare.com/ajax/libs/vis/4.21.0/vis-network.min.js'
+    if 'vis-network.min.js' not in html:
+        # Replace any broken CDN reference with a working one
+        import re
+        html = re.sub(
+            r'src="https?://[^"]*vis-network[^"]*"',
+            f'src="{vis_cdn}"',
+            html
         )
     
-    # Display in Streamlit using st.html (available in Streamlit 1.27+)
-    st.html(html)
+    # Use st.components.v1.html with proper scrolling and height
+    st.components.v1.html(html, height=750, scrolling=True)
 else:
     st.warning("No guests match the current filters. Try adjusting your filters.")
 
@@ -471,7 +475,7 @@ if not df.empty:
     styled_df = df.style.map(color_side, subset=["side"]).map(color_priority, subset=["priority"])
     
     # Display styled dataframe
-    st.dataframe(styled_df, hide_index=True)
+    st.dataframe(styled_df, hide_index=True, width=None)
 else:
     st.info("No guests to display")
 
