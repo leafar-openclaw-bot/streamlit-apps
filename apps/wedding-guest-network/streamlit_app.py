@@ -3,7 +3,7 @@ Wedding Guest Network Visualizer
 PyVis force graph: Groom/Bride → Social Group hubs → Guests.
 Built by OpenClaw 🦞
 """
-# v5.0.0 — repulsion solver (centralGravity=0) for hub-clustering; click-to-edit popup
+# v5.1.0 — diverse hub colors, side-shaped hubs, positioned popup, no raw-HTML tooltip
 
 import json
 import math
@@ -33,24 +33,24 @@ for _g in GUEST_INITIAL:
 # COLOR SCHEME
 # =============================================================================
 
-# Hub (group node) colors — vivid/saturated
+# Each group gets a distinct, vivid color — no more blue monoculture
 GROUP_HUB_COLORS = {
-    "Family":                  "#0D47A1",
-    "Basic School":            "#1565C0",
-    "Secondary School":        "#1976D2",
-    "University":              "#1E88E5",
-    "Reboleira Parish":        "#2196F3",
-    "Erasmus Milan":           "#039BE5",
-    "Erasmus Netherlands":     "#0288D1",
-    "Work (Planos Ótimos)":    "#0277BD",
-    "Work (Sonant)":           "#01579B",
-    "Special (Reciprocity)":   "#4527A0",
-    "Friends":                 "#AD1457",
-    "Work":                    "#C2185B",
-    "Common Friends":          "#6A1B9A",
+    "Family":                  "#1565C0",  # deep blue
+    "Basic School":            "#2E7D32",  # forest green
+    "Secondary School":        "#00838F",  # dark teal
+    "University":              "#283593",  # indigo
+    "Reboleira Parish":        "#E65100",  # deep orange
+    "Erasmus Milan":           "#B71C1C",  # dark red
+    "Erasmus Netherlands":     "#F57F17",  # amber
+    "Work (Planos Ótimos)":    "#4A148C",  # deep purple
+    "Work (Sonant)":           "#1B5E20",  # dark green
+    "Special (Reciprocity)":   "#827717",  # olive
+    "Friends":                 "#AD1457",  # deep pink
+    "Work":                    "#BF360C",  # burnt orange
+    "Common Friends":          "#6A1B9A",  # violet
 }
 
-# Guest node colors — lighter tint of the same hue
+# Guest circles: lighter tint of their group's hub color
 def _lighter(hex_color: str, factor: float = 0.45) -> str:
     h = hex_color.lstrip("#")
     r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
@@ -61,6 +61,10 @@ def _lighter(hex_color: str, factor: float = 0.45) -> str:
     )
 
 GROUP_GUEST_COLORS = {k: _lighter(v) for k, v in GROUP_HUB_COLORS.items()}
+
+# Border color and shape tell you which side a group belongs to
+SIDE_BORDER = {"Rafael": "#90CAF9", "Catarina": "#F48FB1", "Common": "#CE93D8"}
+SIDE_SHAPE  = {"Rafael": "square", "Catarina": "diamond", "Common": "hexagon"}
 
 PRIORITY_SIZE = {"High": 28, "Medium": 18, "Low": 11}
 
@@ -88,10 +92,9 @@ with st.sidebar:
     st.title("💒 Guest Management")
 
     if edit_name:
-        # ---- EDIT MODE ----
         real = next((g for g in st.session_state.guests if g["name"] == edit_name), None)
         if real:
-            st.subheader(f"✏️ Edit Guest")
+            st.subheader("✏️ Edit Guest")
             st.markdown(f"**{real['name']}**")
             with st.form("edit_form"):
                 ep = st.selectbox("Priority", ["High", "Medium", "Low"],
@@ -121,14 +124,13 @@ with st.sidebar:
             st.rerun()
 
     else:
-        # ---- NORMAL MODE ----
         with st.form("add_guest_form", clear_on_submit=True):
             st.subheader("Add New Guest")
-            new_name = st.text_input("Name", placeholder="Full name")
-            new_side = st.selectbox("Side", ["Rafael", "Catarina", "Common"])
-            new_groups = st.multiselect("Groups", ALL_GROUPS, default=["Family"])
+            new_name     = st.text_input("Name", placeholder="Full name")
+            new_side     = st.selectbox("Side", ["Rafael", "Catarina", "Common"])
+            new_groups   = st.multiselect("Groups", ALL_GROUPS, default=["Family"])
             new_priority = st.selectbox("Priority", ["High", "Medium", "Low"])
-            new_notes = st.text_input("Notes", placeholder="Optional notes")
+            new_notes    = st.text_input("Notes", placeholder="Optional notes")
             if st.form_submit_button("Add Guest") and new_name:
                 names = [g["name"] for g in st.session_state.guests]
                 if new_name in names:
@@ -141,24 +143,22 @@ with st.sidebar:
                     st.success(f"Added {new_name}")
 
         st.divider()
-
         st.subheader("Filters")
-        filter_side = st.multiselect("Side", ["Rafael", "Catarina", "Common"],
-                                      default=["Rafael", "Catarina", "Common"])
+        filter_side     = st.multiselect("Side", ["Rafael", "Catarina", "Common"],
+                                          default=["Rafael", "Catarina", "Common"])
         filter_priority = st.multiselect("Priority", ["High", "Medium", "Low"],
-                                         default=["High", "Medium", "Low"])
-        filter_group = st.multiselect("Group", ALL_GROUPS, default=ALL_GROUPS)
+                                          default=["High", "Medium", "Low"])
+        filter_group    = st.multiselect("Group", ALL_GROUPS, default=ALL_GROUPS)
 
         st.divider()
-
         st.subheader("Statistics")
         gs = st.session_state.guests
         st.metric("Total", len(gs))
         st.metric("High Priority", sum(1 for g in gs if g["priority"] == "High"))
         c1, c2 = st.columns(2)
-        c1.metric("Rafael", sum(1 for g in gs if g["side"] == "Rafael"))
+        c1.metric("Rafael",   sum(1 for g in gs if g["side"] == "Rafael"))
         c2.metric("Catarina", sum(1 for g in gs if g["side"] == "Catarina"))
-        st.metric("Common", sum(1 for g in gs if g["side"] == "Common"))
+        st.metric("Common",   sum(1 for g in gs if g["side"] == "Common"))
 
 # =============================================================================
 # MAIN
@@ -172,15 +172,13 @@ if not edit_name:
         and any(grp in filter_group for grp in g["groups"])
     ]
 else:
-    # During edit mode keep last filter (use all)
     filtered = list(st.session_state.guests)
 
 st.title("💒 Wedding Guest Network")
 st.caption(
-    "🔵 Circles = guests (colored by group, size = priority)  ·  "
-    "⬛ Squares = social groups (fixed anchors)  ·  "
-    "⭕ Large circles = Rafael & Catarina  ·  "
-    "Click a person to view & edit"
+    "⬜ Square = Rafael's groups  ·  ◇ Diamond = Catarina's groups  ·  ⬡ Hexagon = Common  ·  "
+    "⭕ Large circle = Rafael / Catarina  ·  ● Small circles = guests (size = priority)  ·  "
+    "Click a guest to view & edit"
 )
 st.caption(f"Showing {len(filtered)} of {len(st.session_state.guests)} guests")
 
@@ -196,8 +194,8 @@ def build_network(guests: list) -> Network:
         cdn_resources="in_line",
     )
 
-    # Physics: repulsion solver with centralGravity=0 so guests only respond
-    # to spring forces from their connected group hub (which is fixed).
+    # repulsion solver, centralGravity=0: guests only feel spring pull toward
+    # their fixed group hub — no drift toward canvas center.
     net.set_options(json.dumps({
         "nodes": {
             "borderWidth": 2,
@@ -211,38 +209,43 @@ def build_network(guests: list) -> Network:
             "enabled": True,
             "solver": "repulsion",
             "repulsion": {
-                "centralGravity": 0,      # no center pull — nodes cluster around hub
-                "springLength": 70,       # rest length of edge springs
-                "springConstant": 0.5,    # stiffness — higher = tighter cluster
-                "nodeDistance": 160,      # repulsion range between unconnected nodes
+                "centralGravity": 0,
+                "springLength": 70,
+                "springConstant": 0.5,
+                "nodeDistance": 160,
                 "damping": 0.5,
             },
             "stabilization": {"iterations": 400, "updateInterval": 25},
         },
-        "interaction": {"hover": True, "tooltipDelay": 100},
+        "interaction": {
+            "hover": False,          # disable built-in hover tooltip
+            "tooltipDelay": 99999,   # effectively disable vis.js tooltips
+        },
     }))
 
     # ---- Groom & Bride — fixed large circles ----
-    net.add_node("__Rafael__", label="Rafael\n(Groom)",
-                 color={"background": "#0D47A1", "border": "#42A5F5",
-                        "highlight": {"background": "#1565C0", "border": "#90CAF9"}},
-                 size=52, shape="dot",
-                 font={"size": 14, "bold": True},
-                 title="<b>Rafael</b> — Groom",
-                 x=-420, y=0, physics=False)
-    net.add_node("__Catarina__", label="Catarina\n(Bride)",
-                 color={"background": "#AD1457", "border": "#F48FB1",
-                        "highlight": {"background": "#C2185B", "border": "#F48FB1"}},
-                 size=52, shape="dot",
-                 font={"size": 14, "bold": True},
-                 title="<b>Catarina</b> — Bride",
-                 x=420, y=0, physics=False)
+    for node_id, label, bg, border, x in [
+        ("__Rafael__",   "Rafael\n(Groom)",  "#0D47A1", "#90CAF9", -440),
+        ("__Catarina__", "Catarina\n(Bride)", "#AD1457", "#F48FB1",  440),
+    ]:
+        net.add_node(node_id, label=label,
+                     color={"background": bg, "border": border,
+                            "highlight": {"background": bg, "border": "#ffffff"}},
+                     size=52, shape="dot",
+                     font={"size": 14, "bold": True, "color": "white"},
+                     title="",          # no vis.js tooltip
+                     x=x, y=0, physics=False)
 
-    # ---- Group hub nodes — squares, fixed on arcs around their anchor ----
+    # ---- Classify groups by side ----
     all_grps = sorted(set(grp for g in guests for grp in g["groups"]))
     catarina_grps = [g for g in all_grps if g in ("Friends", "Work")]
     common_grps   = [g for g in all_grps if "Common" in g]
     rafael_grps   = [g for g in all_grps if g not in catarina_grps and g not in common_grps]
+
+    def grp_side(grp):
+        if grp in catarina_grps: return "Catarina"
+        if grp in common_grps:   return "Common"
+        return "Rafael"
 
     def add_group_arc(group_list, cx, cy, radius, arc_start, arc_end):
         n = len(group_list)
@@ -251,22 +254,25 @@ def build_network(guests: list) -> Network:
                     arc_start + (arc_end - arc_start) * i / (n - 1)
             gx = int(cx + radius * math.cos(angle))
             gy = int(cy + radius * math.sin(angle))
-            hub_color = GROUP_HUB_COLORS.get(grp, "#607D8B")
+            side   = grp_side(grp)
+            bg     = GROUP_HUB_COLORS.get(grp, "#607D8B")
+            border = SIDE_BORDER[side]
+            shape  = SIDE_SHAPE[side]
             net.add_node(
                 f"__group__{grp}", label=grp,
-                color={"background": hub_color, "border": "#ffffff",
-                       "highlight": {"background": hub_color, "border": "#ffffff"}},
-                size=26, shape="square",
+                color={"background": bg, "border": border,
+                       "highlight": {"background": bg, "border": "#ffffff"}},
+                size=26, shape=shape,
                 font={"size": 11, "color": "white"},
-                title=f"<b>Group:</b> {grp}",
+                title="",            # no vis.js tooltip
                 x=gx, y=gy, physics=False,
             )
 
-    add_group_arc(rafael_grps,   -420,  0, 290, math.pi * 0.30, math.pi * 1.70)
-    add_group_arc(catarina_grps,  420,  0, 290, math.pi * -0.70, math.pi * 0.70)
-    add_group_arc(common_grps,      0, -210, 130, math.pi * -0.40, math.pi * 0.40)
+    add_group_arc(rafael_grps,   -440,  0, 300, math.pi * 0.28, math.pi * 1.72)
+    add_group_arc(catarina_grps,  440,  0, 300, math.pi * -0.72, math.pi * 0.72)
+    add_group_arc(common_grps,      0, -220, 130, math.pi * -0.4, math.pi * 0.4)
 
-    # ---- Edges: groom/bride → group hubs ----
+    # ---- Edges: anchor → group hubs ----
     added_hub_edges = set()
     for g in guests:
         for grp in g["groups"]:
@@ -278,18 +284,11 @@ def build_network(guests: list) -> Network:
                 net.add_edge("__Catarina__", gid, color="#F48FB1", width=2)
                 added_hub_edges.add(("C", grp))
 
-    # ---- Guest nodes + edges to their group hubs ----
+    # ---- Guest nodes + edges to group hubs ----
     for g in guests:
-        primary = g["groups"][0] if g["groups"] else "Family"
+        primary    = g["groups"][0] if g["groups"] else "Family"
         node_color = GROUP_GUEST_COLORS.get(primary, "#90A4AE")
         hub_color  = GROUP_HUB_COLORS.get(primary, "#607D8B")
-        tooltip = (
-            f"<b>{g['name']}</b><br>"
-            f"Side: {g['side']}<br>"
-            f"Groups: {', '.join(g['groups'])}<br>"
-            f"Priority: {g['priority']}"
-            + (f"<br><i>{g['notes']}</i>" if g.get("notes") else "")
-        )
         net.add_node(
             g["name"], label=g["name"],
             color={"background": node_color, "border": hub_color,
@@ -297,7 +296,7 @@ def build_network(guests: list) -> Network:
             size=PRIORITY_SIZE.get(g["priority"], 14),
             shape="dot",
             font={"size": 11, "color": "white"},
-            title=tooltip,
+            title="",   # tooltip handled by our popup, not vis.js
         )
         for grp in g["groups"]:
             net.add_edge(f"__group__{grp}", g["name"],
@@ -307,48 +306,60 @@ def build_network(guests: list) -> Network:
 
 
 def inject_popup(html: str, guests: list) -> str:
-    """Inject a click-to-view/edit popup into the PyVis HTML."""
-    guests_map = {g["name"]: g for g in guests}
+    """Inject a click popup that appears next to the clicked node."""
+    guests_map  = {g["name"]: g for g in guests}
     guests_json = json.dumps(guests_map, ensure_ascii=False)
 
-    popup_code = f"""
+    code = f"""
 <style>
-#gn-overlay {{
-    display:none; position:fixed; inset:0;
-    background:rgba(0,0,0,0.35); z-index:9998;
-}}
 #gn-popup {{
-    display:none; position:fixed;
-    top:50%; left:50%; transform:translate(-50%,-50%);
-    background:#242424; border:1px solid #555; border-radius:10px;
-    padding:22px 24px; color:#eee; font-family:Arial,sans-serif;
-    font-size:13px; width:310px; z-index:9999;
-    box-shadow:0 10px 40px rgba(0,0,0,0.7);
+    display: none;
+    position: fixed;
+    background: #242424;
+    border: 1px solid #555;
+    border-radius: 10px;
+    padding: 18px 20px;
+    color: #eee;
+    font-family: Arial, sans-serif;
+    font-size: 13px;
+    width: 290px;
+    z-index: 9999;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.7);
+    pointer-events: auto;
 }}
-#gn-popup h3 {{ margin:0 0 14px; font-size:17px; color:#fff; padding-right:20px; }}
-.gn-field {{ margin:6px 0; display:flex; gap:8px; align-items:baseline; }}
-.gn-lbl {{ color:#888; font-size:11px; text-transform:uppercase;
-           letter-spacing:.5px; min-width:56px; flex-shrink:0; }}
-.gn-val {{ color:#eee; }}
-.gn-High   {{ color:#81c784; font-weight:bold; }}
-.gn-Medium {{ color:#fff176; font-weight:bold; }}
-.gn-Low    {{ color:#ef9a9a; font-weight:bold; }}
-.gn-Rafael   {{ color:#90caf9; }}
-.gn-Catarina {{ color:#f48fb1; }}
-.gn-Common   {{ color:#ce93d8; }}
-.gn-btn-row {{ display:flex; gap:8px; margin-top:16px; }}
-.gn-btn {{ flex:1; padding:8px; border:none; border-radius:6px;
-           cursor:pointer; font-size:13px; font-weight:bold; }}
-.gn-edit  {{ background:#1565C0; color:#fff; }}
-.gn-edit:hover  {{ background:#1976D2; }}
-.gn-close {{ background:#333; color:#aaa; }}
-.gn-close:hover {{ background:#444; }}
-#gn-x {{ position:absolute; top:12px; right:16px; cursor:pointer;
-         color:#666; font-size:20px; line-height:1; user-select:none; }}
-#gn-x:hover {{ color:#aaa; }}
+#gn-popup h3 {{
+    margin: 0 0 12px;
+    font-size: 16px;
+    color: #fff;
+    padding-right: 18px;
+    line-height: 1.3;
+}}
+.gn-field  {{ display: flex; gap: 8px; align-items: baseline; margin: 5px 0; }}
+.gn-lbl    {{ color: #888; font-size: 11px; text-transform: uppercase;
+              letter-spacing: .5px; min-width: 54px; flex-shrink: 0; }}
+.gn-val    {{ color: #eee; }}
+.gn-High   {{ color: #81c784; font-weight: bold; }}
+.gn-Medium {{ color: #fff176; font-weight: bold; }}
+.gn-Low    {{ color: #ef9a9a; font-weight: bold; }}
+.gn-Rafael   {{ color: #90caf9; }}
+.gn-Catarina {{ color: #f48fb1; }}
+.gn-Common   {{ color: #ce93d8; }}
+.gn-notes  {{ font-style: italic; color: #bbb; }}
+.gn-btn-row {{ display: flex; gap: 8px; margin-top: 14px; }}
+.gn-btn    {{ flex: 1; padding: 7px; border: none; border-radius: 6px;
+              cursor: pointer; font-size: 12px; font-weight: bold; }}
+.gn-edit   {{ background: #1565C0; color: #fff; }}
+.gn-edit:hover  {{ background: #1976D2; }}
+.gn-close  {{ background: #333; color: #aaa; }}
+.gn-close:hover {{ background: #444; }}
+#gn-x {{
+    position: absolute; top: 11px; right: 14px;
+    cursor: pointer; color: #666; font-size: 19px;
+    line-height: 1; user-select: none;
+}}
+#gn-x:hover {{ color: #aaa; }}
 </style>
 
-<div id="gn-overlay" onclick="gnClose()"></div>
 <div id="gn-popup">
   <span id="gn-x" onclick="gnClose()">&#215;</span>
   <h3 id="gn-name"></h3>
@@ -366,10 +377,10 @@ def inject_popup(html: str, guests: list) -> str:
   </div>
   <div class="gn-field" id="gn-notes-row" style="display:none">
     <span class="gn-lbl">Notes</span>
-    <span class="gn-val" id="gn-notes" style="font-style:italic;color:#bbb"></span>
+    <span class="gn-val gn-notes" id="gn-notes"></span>
   </div>
   <div class="gn-btn-row">
-    <button class="gn-btn gn-edit" onclick="gnEdit()">&#9998;&nbsp;Edit</button>
+    <button class="gn-btn gn-edit"  onclick="gnEdit()">&#9998;&nbsp;Edit</button>
     <button class="gn-btn gn-close" onclick="gnClose()">Close</button>
   </div>
 </div>
@@ -377,10 +388,10 @@ def inject_popup(html: str, guests: list) -> str:
 <script>
 var _GN = {guests_json};
 var _gnSel = null;
+var _gnListening = false;
 
 function gnClose() {{
-  document.getElementById("gn-popup").style.display   = "none";
-  document.getElementById("gn-overlay").style.display = "none";
+  document.getElementById("gn-popup").style.display = "none";
   _gnSel = null;
   if (typeof network !== "undefined") network.unselectAll();
 }}
@@ -392,27 +403,60 @@ function gnEdit() {{
   window.parent.dispatchEvent(new PopStateEvent("popstate"));
 }}
 
-function gnShow(id) {{
+function gnPosition(popup, sx, sy) {{
+  var pw = 300, ph = popup.offsetHeight || 220;
+  var vw = window.innerWidth, vh = window.innerHeight;
+  var left = sx + 18;
+  if (left + pw > vw - 10) left = sx - pw - 18;
+  left = Math.max(10, left);
+  var top  = sy - Math.round(ph / 2);
+  top  = Math.max(10, Math.min(top, vh - ph - 10));
+  popup.style.left = left + "px";
+  popup.style.top  = top  + "px";
+}}
+
+function gnShow(id, sx, sy) {{
   var g = _GN[id];
   if (!g) return;
   _gnSel = id;
+
   document.getElementById("gn-name").textContent = g.name;
+
   var sEl = document.getElementById("gn-side");
   sEl.textContent = g.side;
-  sEl.className = "gn-val gn-" + g.side;
-  document.getElementById("gn-groups").textContent = g.groups.join(", ");
+  sEl.className   = "gn-val gn-" + g.side;
+
+  document.getElementById("gn-groups").textContent = (g.groups || []).join(", ");
+
   var pEl = document.getElementById("gn-priority");
   pEl.textContent = g.priority;
-  pEl.className = "gn-val gn-" + g.priority;
-  var notesRow = document.getElementById("gn-notes-row");
+  pEl.className   = "gn-val gn-" + g.priority;
+
+  var nRow = document.getElementById("gn-notes-row");
   if (g.notes) {{
     document.getElementById("gn-notes").textContent = g.notes;
-    notesRow.style.display = "flex";
+    nRow.style.display = "flex";
   }} else {{
-    notesRow.style.display = "none";
+    nRow.style.display = "none";
   }}
-  document.getElementById("gn-popup").style.display   = "block";
-  document.getElementById("gn-overlay").style.display = "block";
+
+  var popup = document.getElementById("gn-popup");
+  popup.style.display = "block";
+  gnPosition(popup, sx, sy);
+
+  // Close when clicking anywhere outside the popup (delay to skip current event)
+  if (!_gnListening) {{
+    _gnListening = true;
+    setTimeout(function() {{
+      document.addEventListener("click", function _outside(e) {{
+        if (!document.getElementById("gn-popup").contains(e.target)) {{
+          gnClose();
+          document.removeEventListener("click", _outside);
+          _gnListening = false;
+        }}
+      }});
+    }}, 120);
+  }}
 }}
 
 (function waitForNetwork() {{
@@ -421,7 +465,11 @@ function gnShow(id) {{
       if (!p.nodes.length) return;
       var id = p.nodes[0];
       if (id.startsWith("__")) {{ gnClose(); return; }}
-      gnShow(id);
+
+      var nodePos = network.getPositions([id])[id];
+      var dom     = network.canvasToDOM(nodePos);
+      var rect    = document.getElementById("mynetwork").getBoundingClientRect();
+      gnShow(id, rect.left + dom.x, rect.top + dom.y);
     }});
   }} else {{
     setTimeout(waitForNetwork, 80);
@@ -429,7 +477,7 @@ function gnShow(id) {{
 }})();
 </script>
 """
-    return html.replace("</body>", popup_code + "\n</body>")
+    return html.replace("</body>", code + "\n</body>")
 
 
 # =============================================================================
@@ -437,7 +485,7 @@ function gnShow(id) {{
 # =============================================================================
 
 if filtered:
-    net = build_network(filtered)
+    net  = build_network(filtered)
     html = net.generate_html()
     html = inject_popup(html, filtered)
     components.html(html, height=760, scrolling=False)
@@ -459,7 +507,7 @@ df_rows = [
 ]
 
 if df_rows:
-    df = pd.DataFrame(df_rows)
+    df    = pd.DataFrame(df_rows)
     p_ord = {"High": 0, "Medium": 1, "Low": 2}
     df["_p"] = df["Priority"].map(p_ord)
     df = df.sort_values(["Side", "_p", "Groups", "Name"]).drop("_p", axis=1)
@@ -482,4 +530,4 @@ else:
     st.info("No guests to display.")
 
 st.divider()
-st.caption("Built by OpenClaw 🦞 | Rafael & Catarina | v5.0.0")
+st.caption("Built by OpenClaw 🦞 | Rafael & Catarina | v5.1.0")
