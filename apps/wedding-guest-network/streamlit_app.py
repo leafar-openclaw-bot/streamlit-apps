@@ -173,6 +173,38 @@ with st.sidebar:
                 })
                 st.success(f"✅ Added {new_name}")
 
+        # Hidden signals from D3 floating edit panel
+        guest_signal = st.text_input("Guest signal (from graph)", value="",
+                                      label_visibility="hidden", key="guest_signal",
+                                      args=(), kwargs={})
+        edit_data = st.text_area("Edit data (from floating panel)", value="",
+                                  label_visibility="hidden", key="edit_data",
+                                  args=(), kwargs={})
+
+        # Process floating panel save action
+        if edit_data:
+            try:
+                edit = json.loads(edit_data)
+                if edit.get("action") == "save_edit":
+                    original_name = edit.get("originalName")
+                    real = next((g for g in st.session_state.guests if g["name"] == original_name), None)
+                    if real:
+                        real["priority"] = edit.get("priority", "Medium")
+                        real["groups"] = edit.get("groups", real["groups"])
+                        real["notes"] = edit.get("notes", "")
+                        st.session_state.selected_guest = None
+                        st.rerun()
+            except (json.JSONDecodeError, KeyError, TypeError):
+                pass
+
+        # Process graph node click → set selected guest
+        if guest_signal and not edit_data:
+            found = next((g for g in st.session_state.guests if g["name"] == guest_signal.strip()), None)
+            if found:
+                st.session_state.selected_guest = found
+                # Clear the signal so it doesn't re-trigger
+                st.session_state["guest_signal"] = ""
+
     st.divider()
 
     # Filters
@@ -337,6 +369,7 @@ def build_d3(guests, highlighted_name):
     links_json = json.dumps(links)
     group_ids_json = json.dumps(group_ids)
     hl_json = json.dumps(highlighted_name or "")
+    all_groups_json = json.dumps(GROUP_COLORS)
 
     html = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8">
@@ -489,6 +522,144 @@ grpG.on("click",(e,d)=>{{
 grpG.on("mousemove",e=>{{tt.style.left=(e.pageX+14)+"px";tt.style.top=(e.pageY-10)+"px"}});
 grpG.on("mouseout",()=>{{tt.style.opacity="0"}});
 
+// ============================================================
+// FLOATING EDIT PANEL (SVG overlay via foreignObject)
+// ============================================================
+let selNode = null; // currently selected node for editing
+const PANEL_W = 220, PANEL_H = 280;
+const allGroups = {all_groups_json};
+const PRIORITY_OPTS = ["High","Medium","Low"];
+
+function buildPanelContent(guest) {{
+  const grps = guest.groups || [];
+  const pri = guest.priority || "Medium";
+  return `
+    <div style="font-family:'Segoe UI',Arial,sans-serif;background:rgba(14,17,23,0.97);border:1px solid rgba(255,255,255,0.2);border-radius:10px;padding:14px;width:${{PANEL_W}}px;color:#e0e0e0;box-shadow:0 8px 32px rgba(0,0,0,0.7);">
+      <div style="font-size:13px;font-weight:700;color:white;margin-bottom:10px;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:8px;">✏️ Edit Guest</div>
+      <div style="font-size:12px;color:#aaa;margin-bottom:2px;">Name</div>
+      <div style="font-size:14px;font-weight:600;color:white;margin-bottom:10px;word-break:break-word;">${{guest.name}}</div>
+      <div style="font-size:11px;color:#aaa;margin-bottom:4px;">Priority</div>
+      <select id="edit-priority" style="width:100%;padding:5px 8px;background:#1e1e2e;color:white;border:1px solid rgba(255,255,255,0.15);border-radius:6px;font-size:12px;margin-bottom:10px;cursor:pointer;">
+        ${{PRIORITY_OPTS.map(p=>`<option value="${{p}}" ${{p===pri?'selected':''}}>${{p}}</option>`).join('')}}
+      </select>
+      <div style="font-size:11px;color:#aaa;margin-bottom:4px;">Groups</div>
+      <div style="max-height:80px;overflow-y:auto;background:#1e1e2e;border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:6px;margin-bottom:10px;">
+        ${{Object.keys(allGroups).map(g=>`
+          <label style="display:flex;align-items:center;gap:6px;padding:2px 0;font-size:11px;cursor:pointer;">
+            <input type="checkbox" class="grp-cb" value="${{g}}" ${{grps.includes(g)?'checked':''}} style="cursor:pointer">
+            <span style="width:8px;height:8px;border-radius:2px;background:${{allGroups[g]}};flex-shrink:0"></span>
+            ${{g}}
+          </label>
+        `).join('')}}
+      </div>
+      <div style="font-size:11px;color:#aaa;margin-bottom:4px;">Notes</div>
+      <input id="edit-notes" type="text" value="${{guest.notes||''}}" placeholder="Optional notes..."
+        style="width:100%;padding:5px 8px;background:#1e1e2e;color:white;border:1px solid rgba(255,255,255,0.15);border-radius:6px;font-size:12px;margin-bottom:10px;box-sizing:border-box;" />
+      <div style="display:flex;gap:6px;">
+        <button id="edit-save" style="flex:1;padding:7px;background:#1565C0;color:white;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">💾 Save</button>
+        <button id="edit-close" style="flex:1;padding:7px;background:#333;color:#ccc;border:none;border-radius:6px;cursor:pointer;font-size:12px;">Close</button>
+      </div>
+    </div>
+  `;
+}}
+
+// The edit panel SVG group (hidden initially)
+const editPanelG = svg.append("g").attr("class","edit-panel").style("display","none");
+let fo = null;
+
+function showEditPanel(nodeX, nodeY) {{
+  if (!selNode) return;
+  const guest = selNode;
+  
+  // Position panel: prefer right of node, clamp to viewport
+  let px = nodeX + 30;
+  let py = nodeY - PANEL_H / 2;
+  if (px + PANEL_W > W() - 10) px = nodeX - PANEL_W - 30;
+  if (py < 10) py = 10;
+  if (py + PANEL_H > H() - 10) py = H() - PANEL_H - 10;
+  
+  // Clear previous
+  editPanelG.selectAll("*").remove();
+  
+  // Use foreignObject for HTML content
+  fo = editPanelG.append("foreignObject")
+    .attr("x", px).attr("y", py)
+    .attr("width", PANEL_W).attr("height", PANEL_H)
+    .style("overflow", "visible");
+  
+  const div = fo.append("xhtml:div")
+    .attr("xmlns","http://www.w3.org/1999/xhtml")
+    .html(buildPanelContent(guest));
+  
+  // Wire up buttons
+  div.select("#edit-save").on("click", () => {{
+    const newPri = div.select("#edit-priority").node().value;
+    const newNotes = div.select("#edit-notes").node().value;
+    const newGrps = [];
+    div.selectAll(".grp-cb").each(function() {{
+      if (d3.select(this).node().checked) newGrps.push(d3.select(this).node().value);
+    }});
+    // Send to Streamlit via hidden form field
+    const form = parent.document.getElementById("streamlit-edit-data");
+    if (form) {{
+      form.value = JSON.stringify({{
+        action: "save_edit",
+        originalName: guest.name,
+        priority: newPri,
+        groups: newGrps,
+        notes: newNotes
+      }});
+      // Find and submit the parent form
+      const formEl = form.closest("form");
+      if (formEl) {{
+        const btn = formEl.querySelector("[data-testid=\"stFormSubmitButton\"]");
+        if (btn) btn.click();
+        else formEl.submit();
+      }}
+    }}
+    hideEditPanel();
+  }});
+  
+  div.select("#edit-close").on("click", hideEditPanel);
+  
+  editPanelG.style("display", null);
+}}
+
+function hideEditPanel() {{
+  editPanelG.selectAll("*").remove();
+  selNode = null;
+  perG.classed("sel", false);
+  perG.classed("hl", false);
+}}
+
+// Click person → show floating edit panel (no postMessage to sidebar needed)
+perG.on("click",(e,d)=>{{
+  e.stopPropagation();
+  selNode = d;
+  perG.classed("hl", n => n.name === d.name);
+  perG.classed("sel", n => n.name === d.name);
+  showEditPanel(d.x || e.pageX, d.y || e.pageY);
+  // Also set sidebar signal
+  const sig = parent.document.getElementById("streamlit-guest-signal");
+  if (sig) sig.value = d.name;
+}});
+
+// Click elsewhere → close panel
+svg.on("click", () => {{ hideEditPanel(); }});
+grpG.on("click", null); // prevent hide when clicking groups
+cenG.on("click", null);
+
+// Sidebar signal: clicking a node also sets this hidden input
+// Streamlit reads it and sets selected_guest for the sidebar Edit panel
+
+// Click group → just highlight (no edit panel)
+grpG.on("click",(e,d)=>{{
+  e.stopPropagation();
+  const isHl = perG.classed("hl") && perG.filter(n=>n.groups.includes(d.name)).size() > 0;
+  perG.classed("hl", n => !isHl && n.groups.includes(d.name));
+  if (isHl) {{ hideEditPanel(); }}
+}});
+
 // Listen from parent (Streamlit table→graph)
 window.addEventListener("message",e=>{{
   if(e.data?.type==="highlight"){{
@@ -496,7 +667,8 @@ window.addEventListener("message",e=>{{
     cenG.classed("hl",d=>d.name===e.data.guestName);
   }}
   if(e.data?.type==="clear"){{
-    perG.classed("hl",false);cenG.classed("hl",false);
+    perG.classed("hl",false);cenG.classed("hl",false);perG.classed("sel",false);
+    hideEditPanel();
   }}
 }});
 
@@ -506,6 +678,15 @@ sim.on("tick",()=>{{
   grpG.attr("transform",d=>`translate(${{d.x}},${{d.y}})`);
   perG.attr("transform",d=>`translate(${{d.x}},${{d.y}})`);
   cenG.attr("transform",d=>`translate(${{d.x}},${{d.y}})`);
+  // Reposition panel if node moved
+  if (selNode && editPanelG.style("display") !== "none") {{
+    const nx = selNode.x || 0, ny = selNode.y || 0;
+    let px = nx + 30, py = ny - PANEL_H/2;
+    if (px + PANEL_W > W() - 10) px = nx - PANEL_W - 30;
+    if (py < 10) py = 10;
+    if (py + PANEL_H > H() - 10) py = H() - PANEL_H - 10;
+    editPanelG.select("foreignObject").attr("x", px).attr("y", py);
+  }}
 }});
 
 window.addEventListener("resize",()=>{{
@@ -531,7 +712,7 @@ else:
 # =============================================================================
 
 st.divider()
-st.subheader("📋 Guest List — click a row to select & edit")
+st.subheader("📋 Guest List — click a row to highlight")
 
 df_rows = []
 for g in filtered:
@@ -549,7 +730,6 @@ if df_rows:
     df_disp["_p"] = df_disp["Priority"].map(p_ord)
     df_disp = df_disp.sort_values(["Side", "_p", "Groups", "Name"]).drop("_p", axis=1)
 
-    # Style
     def bg_name(val):
         sel = st.session_state.selected_guest
         if val == (sel or {}).get("name"):
@@ -562,24 +742,9 @@ if df_rows:
 
     styled = df_disp.style.map(bg_name, subset=["Name"]).map(bg_pri, subset=["Priority"])
     st.dataframe(styled, hide_index=True)
-
-    st.caption("Click a row to select it · Then use the Edit panel in the sidebar · Yellow = highlighted, Cyan = selected")
-
-    # Hidden form for D3 → Streamlit click bridge
-    with st.form("click_bridge", clear_on_submit=True):
-        clicked_name = st.text_input("Clicked guest (from graph)", value="", label_visibility="hidden", key="click_input")
-        submitted = st.form_submit_button("Select", disabled=True)
-        if clicked_name and clicked_name.strip():
-            # Find and select the guest
-            found = next((g for g in st.session_state.guests if g["name"] == clicked_name.strip()), None)
-            if found:
-                if st.session_state.selected_guest and st.session_state.selected_guest["name"] == found["name"]:
-                    st.session_state.selected_guest = None  # toggle off
-                else:
-                    st.session_state.selected_guest = found
-                st.rerun()
+    st.caption("Click a row or node to highlight · Edit panel appears floating near the node")
 else:
     st.info("No guests to display")
 
 st.divider()
-st.caption("💒 Built by OpenClaw 🦞 | Rafael & Catarina | v3.2.0 — Group clusters + bidirectional selection")
+st.caption("💒 Built by OpenClaw 🦞 | Rafael & Catarina | v3.3.0 — Floating node edit panel")
