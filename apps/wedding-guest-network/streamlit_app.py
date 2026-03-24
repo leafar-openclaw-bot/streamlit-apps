@@ -3,7 +3,7 @@ Wedding Guest Network Visualizer
 PyVis force graph: Groom/Bride → Social Group hubs → Guests.
 Built by OpenClaw 🦞
 """
-# v5.1.0 — diverse hub colors, side-shaped hubs, positioned popup, no raw-HTML tooltip
+# v5.2.0 — rigid drag, collapse/expand hubs, popup next to node, edit via location.href
 
 import json
 import math
@@ -306,7 +306,7 @@ def build_network(guests: list) -> Network:
 
 
 def inject_popup(html: str, guests: list) -> str:
-    """Inject a click popup that appears next to the clicked node."""
+    """Inject popup + rigid-drag + collapse/expand logic into the PyVis HTML."""
     guests_map  = {g["name"]: g for g in guests}
     guests_json = json.dumps(guests_map, ensure_ascii=False)
 
@@ -318,46 +318,43 @@ def inject_popup(html: str, guests: list) -> str:
     background: #242424;
     border: 1px solid #555;
     border-radius: 10px;
-    padding: 18px 20px;
+    padding: 18px 20px 16px;
     color: #eee;
     font-family: Arial, sans-serif;
     font-size: 13px;
-    width: 290px;
+    width: 280px;
     z-index: 9999;
     box-shadow: 0 8px 32px rgba(0,0,0,0.7);
     pointer-events: auto;
 }}
 #gn-popup h3 {{
-    margin: 0 0 12px;
-    font-size: 16px;
-    color: #fff;
-    padding-right: 18px;
-    line-height: 1.3;
+    margin: 0 0 12px; font-size: 16px; color: #fff;
+    padding-right: 20px; line-height: 1.3;
 }}
-.gn-field  {{ display: flex; gap: 8px; align-items: baseline; margin: 5px 0; }}
-.gn-lbl    {{ color: #888; font-size: 11px; text-transform: uppercase;
-              letter-spacing: .5px; min-width: 54px; flex-shrink: 0; }}
-.gn-val    {{ color: #eee; }}
-.gn-High   {{ color: #81c784; font-weight: bold; }}
-.gn-Medium {{ color: #fff176; font-weight: bold; }}
-.gn-Low    {{ color: #ef9a9a; font-weight: bold; }}
-.gn-Rafael   {{ color: #90caf9; }}
-.gn-Catarina {{ color: #f48fb1; }}
-.gn-Common   {{ color: #ce93d8; }}
-.gn-notes  {{ font-style: italic; color: #bbb; }}
-.gn-btn-row {{ display: flex; gap: 8px; margin-top: 14px; }}
-.gn-btn    {{ flex: 1; padding: 7px; border: none; border-radius: 6px;
-              cursor: pointer; font-size: 12px; font-weight: bold; }}
-.gn-edit   {{ background: #1565C0; color: #fff; }}
-.gn-edit:hover  {{ background: #1976D2; }}
-.gn-close  {{ background: #333; color: #aaa; }}
-.gn-close:hover {{ background: #444; }}
+.gn-field  {{ display:flex; gap:8px; align-items:baseline; margin:5px 0; }}
+.gn-lbl    {{ color:#888; font-size:11px; text-transform:uppercase;
+              letter-spacing:.5px; min-width:54px; flex-shrink:0; }}
+.gn-val    {{ color:#eee; }}
+.gn-High   {{ color:#81c784; font-weight:bold; }}
+.gn-Medium {{ color:#fff176; font-weight:bold; }}
+.gn-Low    {{ color:#ef9a9a; font-weight:bold; }}
+.gn-Rafael   {{ color:#90caf9; }}
+.gn-Catarina {{ color:#f48fb1; }}
+.gn-Common   {{ color:#ce93d8; }}
+.gn-notes  {{ font-style:italic; color:#bbb; }}
+.gn-btn-row {{ display:flex; gap:8px; margin-top:14px; }}
+.gn-btn    {{ flex:1; padding:8px; border:none; border-radius:6px;
+              cursor:pointer; font-size:12px; font-weight:bold; }}
+.gn-edit   {{ background:#1565C0; color:#fff; }}
+.gn-edit:hover  {{ background:#1976D2; }}
+.gn-close  {{ background:#333; color:#aaa; }}
+.gn-close:hover {{ background:#444; }}
 #gn-x {{
-    position: absolute; top: 11px; right: 14px;
-    cursor: pointer; color: #666; font-size: 19px;
-    line-height: 1; user-select: none;
+    position:absolute; top:11px; right:14px;
+    cursor:pointer; color:#666; font-size:20px;
+    line-height:1; user-select:none;
 }}
-#gn-x:hover {{ color: #aaa; }}
+#gn-x:hover {{ color:#aaa; }}
 </style>
 
 <div id="gn-popup">
@@ -386,95 +383,167 @@ def inject_popup(html: str, guests: list) -> str:
 </div>
 
 <script>
+// ─── Guest data ────────────────────────────────────────────────────────────
 var _GN = {guests_json};
+
+// ─── Popup ─────────────────────────────────────────────────────────────────
 var _gnSel = null;
-var _gnListening = false;
+var _gnOutside = null;
 
 function gnClose() {{
-  document.getElementById("gn-popup").style.display = "none";
-  _gnSel = null;
-  if (typeof network !== "undefined") network.unselectAll();
+    document.getElementById("gn-popup").style.display = "none";
+    _gnSel = null;
+    if (_gnOutside) {{
+        document.removeEventListener("mousedown", _gnOutside);
+        _gnOutside = null;
+    }}
+    if (typeof network !== "undefined") network.unselectAll();
 }}
 
 function gnEdit() {{
-  if (!_gnSel) return;
-  var url = window.parent.location.pathname + "?edit=" + encodeURIComponent(_gnSel);
-  window.parent.history.pushState({{}}, "", url);
-  window.parent.dispatchEvent(new PopStateEvent("popstate"));
+    if (!_gnSel) return;
+    // Navigate parent to ?edit=<name> — triggers Streamlit rerun with edit form
+    window.parent.location.href = "?edit=" + encodeURIComponent(_gnSel);
 }}
 
-function gnPosition(popup, sx, sy) {{
-  var pw = 300, ph = popup.offsetHeight || 220;
-  var vw = window.innerWidth, vh = window.innerHeight;
-  var left = sx + 18;
-  if (left + pw > vw - 10) left = sx - pw - 18;
-  left = Math.max(10, left);
-  var top  = sy - Math.round(ph / 2);
-  top  = Math.max(10, Math.min(top, vh - ph - 10));
-  popup.style.left = left + "px";
-  popup.style.top  = top  + "px";
+function gnPosition(sx, sy) {{
+    var popup = document.getElementById("gn-popup");
+    var pw = 296, ph = popup.offsetHeight || 220;
+    var vw = window.innerWidth, vh = window.innerHeight;
+    var left = sx + 16;
+    if (left + pw > vw - 8) left = sx - pw - 16;
+    left = Math.max(8, left);
+    var top = sy - Math.round(ph / 2);
+    top = Math.max(8, Math.min(top, vh - ph - 8));
+    popup.style.left = left + "px";
+    popup.style.top  = top  + "px";
 }}
 
 function gnShow(id, sx, sy) {{
-  var g = _GN[id];
-  if (!g) return;
-  _gnSel = id;
-
-  document.getElementById("gn-name").textContent = g.name;
-
-  var sEl = document.getElementById("gn-side");
-  sEl.textContent = g.side;
-  sEl.className   = "gn-val gn-" + g.side;
-
-  document.getElementById("gn-groups").textContent = (g.groups || []).join(", ");
-
-  var pEl = document.getElementById("gn-priority");
-  pEl.textContent = g.priority;
-  pEl.className   = "gn-val gn-" + g.priority;
-
-  var nRow = document.getElementById("gn-notes-row");
-  if (g.notes) {{
-    document.getElementById("gn-notes").textContent = g.notes;
-    nRow.style.display = "flex";
-  }} else {{
-    nRow.style.display = "none";
-  }}
-
-  var popup = document.getElementById("gn-popup");
-  popup.style.display = "block";
-  gnPosition(popup, sx, sy);
-
-  // Close when clicking anywhere outside the popup (delay to skip current event)
-  if (!_gnListening) {{
-    _gnListening = true;
+    var g = _GN[id];
+    if (!g) return;
+    _gnSel = id;
+    document.getElementById("gn-name").textContent = g.name;
+    var sEl = document.getElementById("gn-side");
+    sEl.textContent = g.side; sEl.className = "gn-val gn-" + g.side;
+    document.getElementById("gn-groups").textContent = (g.groups || []).join(", ");
+    var pEl = document.getElementById("gn-priority");
+    pEl.textContent = g.priority; pEl.className = "gn-val gn-" + g.priority;
+    var nRow = document.getElementById("gn-notes-row");
+    if (g.notes) {{
+        document.getElementById("gn-notes").textContent = g.notes;
+        nRow.style.display = "flex";
+    }} else {{
+        nRow.style.display = "none";
+    }}
+    var popup = document.getElementById("gn-popup");
+    popup.style.display = "block";
+    gnPosition(sx, sy);
+    // Close on click outside (delayed to skip the current mousedown)
+    if (_gnOutside) document.removeEventListener("mousedown", _gnOutside);
     setTimeout(function() {{
-      document.addEventListener("click", function _outside(e) {{
-        if (!document.getElementById("gn-popup").contains(e.target)) {{
-          gnClose();
-          document.removeEventListener("click", _outside);
-          _gnListening = false;
-        }}
-      }});
-    }}, 120);
-  }}
+        _gnOutside = function(e) {{
+            if (!popup.contains(e.target)) gnClose();
+        }};
+        document.addEventListener("mousedown", _gnOutside);
+    }}, 100);
 }}
 
-(function waitForNetwork() {{
-  if (typeof network !== "undefined") {{
-    network.on("selectNode", function(p) {{
-      if (!p.nodes.length) return;
-      var id = p.nodes[0];
-      if (id.startsWith("__")) {{ gnClose(); return; }}
+// ─── Rigid dragging ────────────────────────────────────────────────────────
+var _dId = null, _dGroupIds = [], _dStart = {{}}, _dPhysics = [];
 
-      var nodePos = network.getPositions([id])[id];
-      var dom     = network.canvasToDOM(nodePos);
-      var rect    = document.getElementById("mynetwork").getBoundingClientRect();
-      gnShow(id, rect.left + dom.x, rect.top + dom.y);
+function _collectGuests(hubId, ids, pos) {{
+    network.getConnectedNodes(hubId).forEach(function(gId) {{
+        if (!gId.startsWith("__") && ids.indexOf(gId) < 0) {{
+            var nd = nodes.get(gId);
+            if (nd && !nd.hidden) {{ ids.push(gId); _dStart[gId] = pos[gId]; }}
+        }}
     }});
-  }} else {{
-    setTimeout(waitForNetwork, 80);
-  }}
-}})();
+}}
+
+network.on("dragStart", function(p) {{
+    if (!p.nodes.length) return;
+    _dId = p.nodes[0]; _dGroupIds = []; _dStart = {{}}; _dPhysics = [];
+    var pos = network.getPositions();
+    _dStart[_dId] = pos[_dId];
+
+    if (_dId === "__Rafael__" || _dId === "__Catarina__") {{
+        network.getConnectedNodes(_dId).forEach(function(hubId) {{
+            if (!hubId.startsWith("__group__")) return;
+            if (_dGroupIds.indexOf(hubId) < 0) {{ _dGroupIds.push(hubId); _dStart[hubId] = pos[hubId]; }}
+            _collectGuests(hubId, _dGroupIds, pos);
+        }});
+    }} else if (_dId.startsWith("__group__")) {{
+        _collectGuests(_dId, _dGroupIds, pos);
+    }}
+
+    // Freeze physics on visible guests so physics engine doesn't fight the drag
+    _dPhysics = _dGroupIds.filter(function(id) {{ return !id.startsWith("__"); }});
+    if (_dPhysics.length) nodes.update(_dPhysics.map(function(id) {{ return {{id:id, physics:false}}; }}));
+}});
+
+network.on("drag", function(p) {{
+    if (!p.nodes.length || !_dGroupIds.length) return;
+    var cur = network.getPositions([_dId])[_dId];
+    var dx = cur.x - _dStart[_dId].x, dy = cur.y - _dStart[_dId].y;
+    nodes.update(_dGroupIds.map(function(id) {{
+        return {{ id:id, x: _dStart[id].x + dx, y: _dStart[id].y + dy }};
+    }}));
+}});
+
+network.on("dragEnd", function() {{
+    if (_dPhysics.length) nodes.update(_dPhysics.map(function(id) {{ return {{id:id, physics:true}}; }}));
+    _dId = null; _dGroupIds = []; _dStart = {{}}; _dPhysics = [];
+}});
+
+// ─── Double-click group hub: collapse / expand ──────────────────────────────
+var _collapsed = {{}};   // groupId → true/false
+var _collData   = {{}};   // groupId → {{ nodeIds, edgeIds, baseLabel }}
+
+network.on("doubleClick", function(p) {{
+    gnClose();
+    if (!p.nodes.length) return;
+    var id = p.nodes[0];
+    if (!id.startsWith("__group__")) return;
+
+    var nd        = nodes.get(id);
+    var baseLabel = nd ? nd.label.replace(/\n\(\d+\)$/, "") : id.replace("__group__","");
+
+    if (_collapsed[id]) {{
+        // ── EXPAND ──
+        var info = _collData[id] || {{ nodeIds:[], edgeIds:[] }};
+        nodes.update(info.nodeIds.map(function(n) {{ return {{id:n, hidden:false}}; }}));
+        edges.update(info.edgeIds.map(function(e) {{ return {{id:e, hidden:false}}; }}));
+        nodes.update({{ id:id, label:baseLabel }});
+        _collapsed[id] = false;
+        delete _collData[id];
+    }} else {{
+        // ── COLLAPSE ──
+        var guestIds = network.getConnectedNodes(id).filter(function(g) {{ return !g.startsWith("__"); }});
+        var edgeIds  = [];
+        guestIds.forEach(function(gId) {{
+            network.getConnectedEdges(gId).forEach(function(eId) {{
+                if (edgeIds.indexOf(eId) < 0) edgeIds.push(eId);
+            }});
+        }});
+        _collData[id]   = {{ nodeIds:guestIds, edgeIds:edgeIds }};
+        _collapsed[id]  = true;
+        nodes.update(guestIds.map(function(n) {{ return {{id:n, hidden:true}}; }}));
+        edges.update(edgeIds.map(function(e) {{ return {{id:e, hidden:true}}; }}));
+        nodes.update({{ id:id, label: baseLabel + "\\n(" + guestIds.length + ")" }});
+    }}
+}});
+
+// ─── Select node → show popup ──────────────────────────────────────────────
+network.on("selectNode", function(p) {{
+    if (!p.nodes.length) return;
+    var id = p.nodes[0];
+    if (id.startsWith("__")) {{ gnClose(); return; }}
+    var nodePos = network.getPositions([id])[id];
+    var dom     = network.canvasToDOM(nodePos);
+    var rect    = document.getElementById("mynetwork").getBoundingClientRect();
+    gnShow(id, rect.left + dom.x, rect.top + dom.y);
+}});
 </script>
 """
     return html.replace("</body>", code + "\n</body>")
