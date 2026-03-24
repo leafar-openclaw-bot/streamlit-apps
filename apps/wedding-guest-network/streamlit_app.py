@@ -507,7 +507,7 @@ network.on("doubleClick", function(p) {{
     if (!id.startsWith("__group__")) return;
 
     var nd        = nodes.get(id);
-    var baseLabel = nd ? nd.label.replace(/\n\(\d+\)$/, "") : id.replace("__group__","");
+    var baseLabel = nd ? nd.label.replace(/\\n\\(\\d+\\)$/, "") : id.replace("__group__","");
 
     if (_collapsed[id]) {{
         // ── EXPAND ──
