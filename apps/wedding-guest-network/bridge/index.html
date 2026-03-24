@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html><body>
+<script>
+// Streamlit component bridge: polls window.parent.sessionStorage for guest
+// edits saved by the popup and forwards them to Streamlit via the
+// component value protocol (triggers a Python rerun when data changes).
+
+var _lastSent = "__init__";
+
+function send(val) {
+  var s = JSON.stringify(val);
+  if (s === _lastSent) return;          // no change → no rerun
+  _lastSent = s;
+  window.parent.postMessage({
+    type: "streamlit:setComponentValue",
+    value: val,
+    dataType: "json"
+  }, "*");
+}
+
+function poll() {
+  var raw = null;
+  try { raw = window.parent.sessionStorage.getItem("wgn_save"); } catch(e) {}
+  if (raw) {
+    try { window.parent.sessionStorage.removeItem("wgn_save"); } catch(e) {}
+    send(raw);          // non-null → triggers Streamlit rerun
+  } else {
+    send(null);         // null → only triggers rerun if previously had data
+  }
+}
+
+// Signal ready to Streamlit
+window.parent.postMessage({ type: "streamlit:componentReady", apiVersion: 1 }, "*");
+poll();                 // immediate check on load
+setInterval(poll, 400);
+</script>
+</body></html>
