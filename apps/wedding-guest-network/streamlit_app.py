@@ -8,8 +8,26 @@ Built by OpenClaw 🦞
 import json
 import math
 import pathlib
+import urllib.request
 import streamlit as st
 import pandas as pd
+
+
+@st.cache_data(show_spinner=False)
+def _load_d3() -> str:
+    """Fetch D3 v7 once and cache. Inlined in HTML to avoid iframe CSP issues."""
+    urls = [
+        "https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js",
+        "https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js",
+        "https://unpkg.com/d3@7.9.0/dist/d3.min.js",
+    ]
+    for url in urls:
+        try:
+            with urllib.request.urlopen(url, timeout=10) as r:
+                return r.read().decode("utf-8")
+        except Exception:
+            continue
+    return "console.error('D3 could not be loaded');"
 
 st.set_page_config(page_title="Wedding Guest Network", page_icon="💒", layout="wide")
 
@@ -288,6 +306,7 @@ def build_d3(guests, highlighted_name):
             links.append({"source": g["name"], "target": "__Catarina__",
                           "color": "#7B1FA2", "width": 0.5, "opacity": 0.2})
 
+    d3_js = _load_d3()
     nodes_json = json.dumps(nodes)
     links_json = json.dumps(links)
     group_ids_json = json.dumps(group_ids)
@@ -330,29 +349,7 @@ svg{{width:100%;height:700px;display:block}}
   <div class="li"><div class="ld" style="background:#1976D2"></div> ● Person</div>
   <div class="li"><div class="ld" style="background:#FFD700"></div> ⭐ Highlighted</div>
 </div>
-<script>
-// Load D3 dynamically with fallback CDNs
-(function(){{
-  var cdns = [
-    "https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js",
-    "https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js",
-    "https://unpkg.com/d3@7.9.0/dist/d3.min.js"
-  ];
-  var idx = 0;
-  function tryLoad(){{
-    if(idx >= cdns.length){{
-      document.body.innerHTML='<div style="color:red;padding:20px">Failed to load D3.js from all CDNs</div>';
-      return;
-    }}
-    var s=document.createElement("script");
-    s.src=cdns[idx++];
-    s.onerror=tryLoad;
-    s.onload=init;
-    document.head.appendChild(s);
-  }}
-  tryLoad();
-}})();
-</script>
+<script>{d3_js}</script>
 <script>
 const nodes = {nodes_json};
 const links = {links_json};
@@ -623,6 +620,7 @@ window.addEventListener("resize",()=>{{
 }});
 
 }} // end init
+init();
 </script></body></html>"""
     return html
 
