@@ -3,7 +3,7 @@ Wedding Guest Network Visualizer
 PyVis force graph: Groom/Bride → Social Group hubs → Guests.
 Built by OpenClaw 🦞
 """
-# v6.1.0 — wider layout, cleaner semicircles, physics controls panel, network title
+# v7.0.0 — Supabase persistence, password gate
 
 import json
 import math
@@ -12,21 +12,75 @@ import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
 from pyvis.network import Network
+from supabase import create_client, Client
 
 st.set_page_config(page_title="Wedding Guest Network", page_icon="💒", layout="wide")
 
 # =============================================================================
-# GUEST DATA
+# PASSWORD GATE — blocks access until the shared password is entered
+# =============================================================================
+
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+if not st.session_state.authenticated:
+    st.title("💒 Wedding Guest Network")
+    st.markdown("##### Please enter the access password")
+    pw = st.text_input("Password", type="password", placeholder="Enter password…")
+    if pw:
+        if pw == st.secrets["auth"]["password"]:
+            st.session_state.authenticated = True
+            st.rerun()
+        else:
+            st.error("Incorrect password. Try again.")
+    st.stop()
+
+# =============================================================================
+# SUPABASE CLIENT
+# =============================================================================
+
+@st.cache_resource
+def get_supabase() -> Client:
+    return create_client(
+        st.secrets["supabase"]["url"],
+        st.secrets["supabase"]["key"],
+    )
+
+def load_guests() -> list[dict]:
+    """Fetch all guests from Supabase, ordered by name."""
+    rows = get_supabase().table("guests").select("*").order("name").execute().data
+    # Supabase returns groups as a Python list already (PostgreSQL text[])
+    return rows
+
+def save_guest(guest: dict) -> None:
+    """Upsert a single guest record (match on name)."""
+    row = {k: guest[k] for k in ("name", "side", "groups", "priority", "notes") if k in guest}
+    get_supabase().table("guests").upsert(row, on_conflict="name").execute()
+
+def delete_guest(name: str) -> None:
+    """Delete a guest by name."""
+    get_supabase().table("guests").delete().eq("name", name).execute()
+
+# =============================================================================
+# GUEST DATA — loaded from Supabase (falls back to guests.json for local dev)
 # =============================================================================
 
 _GUESTS_FILE = pathlib.Path(__file__).parent / "guests.json"
 
-with open(_GUESTS_FILE, "r", encoding="utf-8") as _f:
-    GUEST_INITIAL = json.load(_f)
-
-for _g in GUEST_INITIAL:
-    if "groups" not in _g:
-        _g["groups"] = [_g.pop("group")] if "group" in _g else []
+def _load_initial() -> list[dict]:
+    try:
+        guests = load_guests()
+        if guests:
+            return guests
+    except Exception:
+        pass
+    # Fallback: local JSON (local development without credentials)
+    with open(_GUESTS_FILE, encoding="utf-8") as f:
+        data = json.load(f)
+    for g in data:
+        if "groups" not in g:
+            g["groups"] = [g.pop("group")] if "group" in g else []
+    return data
 
 # =============================================================================
 # COLOR SCHEME
@@ -78,7 +132,7 @@ ALL_GROUPS = sorted([
 _BRIDGE_DIR = pathlib.Path(__file__).parent / "bridge"
 _BRIDGE = components.declare_component("wgn_bridge", path=str(_BRIDGE_DIR))
 
-# Render bridge (invisible, 1px) and pick up any pending guest edits
+# Render bridge (invisible) and pick up any pending guest edits from the popup
 _pending_raw = _BRIDGE(key="wgn_bridge")
 if _pending_raw and isinstance(_pending_raw, str):
     try:
@@ -89,6 +143,7 @@ if _pending_raw and isinstance(_pending_raw, str):
                 for k in ("priority", "groups", "side", "notes"):
                     if k in u:
                         g[k] = u[k]
+                save_guest(g)   # persist to Supabase
     except Exception:
         pass
 
@@ -97,7 +152,7 @@ if _pending_raw and isinstance(_pending_raw, str):
 # =============================================================================
 
 if "guests" not in st.session_state:
-    st.session_state.guests = GUEST_INITIAL
+    st.session_state.guests = _load_initial()
 
 # =============================================================================
 # SIDEBAR
@@ -118,10 +173,15 @@ with st.sidebar:
             if new_name in names:
                 st.error(f"Already exists: {new_name}")
             else:
-                st.session_state.guests.append({
+                new_guest = {
                     "name": new_name, "side": new_side, "groups": new_groups,
                     "priority": new_priority, "notes": new_notes,
-                })
+                }
+                st.session_state.guests.append(new_guest)
+                try:
+                    save_guest(new_guest)
+                except Exception as e:
+                    st.warning(f"Saved locally but DB write failed: {e}")
                 st.success(f"Added {new_name}")
 
     st.divider()
@@ -819,4 +879,4 @@ else:
     st.info("No guests to display.")
 
 st.divider()
-st.caption("Built by OpenClaw 🦞 | Rafael & Catarina | v6.1.0")
+st.caption("Built by OpenClaw 🦞 | Rafael & Catarina | v7.0.0")
