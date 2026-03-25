@@ -3,7 +3,7 @@ Wedding Guest Network Visualizer
 PyVis force graph: Groom/Bride → Social Group hubs → Guests.
 Built by OpenClaw 🦞
 """
-# v6.0.0 — inline popup editing, bridge component, fixed rigid drag
+# v6.1.0 — wider layout, cleaner semicircles, physics controls panel, network title
 
 import json
 import math
@@ -166,7 +166,7 @@ st.caption(f"Showing {len(filtered)} of {len(st.session_state.guests)} guests")
 
 def build_network(guests: list) -> Network:
     net = Network(
-        height="720px", width="100%",
+        height="760px", width="100%",
         bgcolor="#1e1e1e", font_color="white",
         directed=False, notebook=False,
         cdn_resources="in_line",
@@ -186,12 +186,12 @@ def build_network(guests: list) -> Network:
             "solver": "repulsion",
             "repulsion": {
                 "centralGravity": 0,
-                "springLength": 70,
-                "springConstant": 0.5,
-                "nodeDistance": 160,
+                "springLength": 130,
+                "springConstant": 0.35,
+                "nodeDistance": 280,
                 "damping": 0.5,
             },
-            "stabilization": {"iterations": 400, "updateInterval": 25},
+            "stabilization": {"iterations": 600, "updateInterval": 20},
         },
         "interaction": {
             "hover": False,
@@ -200,8 +200,8 @@ def build_network(guests: list) -> Network:
     }))
 
     for node_id, label, bg, border, x in [
-        ("__Rafael__",   "Rafael\n(Groom)",   "#0D47A1", "#90CAF9", -440),
-        ("__Catarina__", "Catarina\n(Bride)",  "#AD1457", "#F48FB1",  440),
+        ("__Rafael__",   "Rafael\n(Groom)",   "#0D47A1", "#90CAF9", -580),
+        ("__Catarina__", "Catarina\n(Bride)",  "#AD1457", "#F48FB1",  580),
     ]:
         net.add_node(node_id, label=label,
                      color={"background": bg, "border": border,
@@ -241,9 +241,12 @@ def build_network(guests: list) -> Network:
                 physics=False,
             )
 
-    add_group_arc(rafael_grps,   -440,  0, 300, math.pi * 0.28, math.pi * 1.72)
-    add_group_arc(catarina_grps,  440,  0, 300, math.pi * -0.72, math.pi * 0.72)
-    add_group_arc(common_grps,      0, -220, 130, math.pi * -0.4,  math.pi * 0.4)
+    # Left semicircle for Rafael's groups (180° sweep, opening left)
+    add_group_arc(rafael_grps,   -580,  0, 400, math.pi * 0.50, math.pi * 1.50)
+    # Right semicircle for Catarina's groups (180° sweep, opening right)
+    add_group_arc(catarina_grps,  580,  0, 400, math.pi * -0.50, math.pi * 0.50)
+    # Common groups arc at top center
+    add_group_arc(common_grps,      0, -260, 180, math.pi * -0.35, math.pi * 0.35)
 
     added_hub_edges = set()
     for g in guests:
@@ -279,6 +282,8 @@ def build_network(guests: list) -> Network:
 def inject_interactions(html: str, guests: list) -> str:
     """
     Inject into the PyVis HTML:
+    - Network title overlay
+    - Physics controls panel (real-time sliders)
     - Inline-editable click popup (view + edit mode)
     - Rigid drag (hub moves guests; root moves hubs+guests)
     - Double-click group: collapse / expand members
@@ -292,6 +297,51 @@ def inject_interactions(html: str, guests: list) -> str:
 
     code = f"""
 <style>
+/* ── Network canvas: needs relative positioning for overlays ── */
+#mynetwork {{ position: relative !important; }}
+
+/* ── Title overlay ── */
+#gn-title {{
+  position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
+  color: #fff; font-family: Arial, sans-serif; font-size: 17px; font-weight: bold;
+  background: rgba(0,0,0,0.45); padding: 5px 18px; border-radius: 20px;
+  pointer-events: none; white-space: nowrap; z-index: 200;
+  letter-spacing: .3px;
+}}
+
+/* ── Physics controls panel ── */
+#gn-ctrl {{
+  position: absolute; bottom: 14px; right: 14px;
+  background: rgba(20,20,20,0.88); border: 1px solid #444;
+  border-radius: 10px; color: #ccc; font-family: Arial, sans-serif;
+  font-size: 12px; z-index: 300; min-width: 220px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.5);
+}}
+#gn-ctrl-hdr {{
+  padding: 8px 14px; cursor: pointer; font-weight: bold; font-size: 13px;
+  color: #eee; display: flex; justify-content: space-between; align-items: center;
+  user-select: none;
+}}
+#gn-ctrl-hdr:hover {{ color: #fff; }}
+#gn-ctrl-body {{ padding: 10px 14px 12px; display: none; }}
+.gn-sl-row {{
+  display: grid; grid-template-columns: 1fr 120px 32px;
+  align-items: center; gap: 6px; margin: 6px 0;
+}}
+.gn-sl-row span:first-child {{ color: #999; font-size: 11px; }}
+.gn-sl-row input[type=range] {{
+  width: 100%; accent-color: #1E88E5; cursor: pointer;
+}}
+.gn-sl-row span:last-child {{
+  text-align: right; color: #90CAF9; font-size: 11px; min-width: 30px;
+}}
+#gn-ctrl-btns {{ display: flex; gap: 6px; margin-top: 10px; }}
+.gn-ctrl-btn {{
+  flex: 1; padding: 5px; border: 1px solid #555; border-radius: 5px;
+  background: #2a2a2a; color: #ccc; font-size: 11px; cursor: pointer;
+}}
+.gn-ctrl-btn:hover {{ background: #333; color: #fff; }}
+
 /* ── Popup container ── */
 #gn-popup {{
   display:none; position:fixed;
@@ -330,6 +380,48 @@ def inject_interactions(html: str, guests: list) -> str:
 .gn-secondary {{ background:#333; color:#aaa; }}
 .gn-secondary:hover {{ background:#444; }}
 </style>
+
+<!-- Title overlay (injected into #mynetwork after load) -->
+<div id="gn-title" style="display:none">&#128146; Rafael &amp; Catarina &mdash; Wedding Guest Network</div>
+
+<!-- Physics controls panel -->
+<div id="gn-ctrl">
+  <div id="gn-ctrl-hdr" onclick="gnCtrlToggle()">
+    <span>&#9881; Physics</span><span id="gn-ctrl-arrow">&#9660;</span>
+  </div>
+  <div id="gn-ctrl-body">
+    <div class="gn-sl-row">
+      <span>Spring length</span>
+      <input type="range" id="ctrl-sl" min="30" max="300" value="130" step="5" oninput="gnApplyPhysics()">
+      <span id="ctrl-sl-v">130</span>
+    </div>
+    <div class="gn-sl-row">
+      <span>Spring strength</span>
+      <input type="range" id="ctrl-sc" min="5" max="100" value="35" step="5" oninput="gnApplyPhysics()">
+      <span id="ctrl-sc-v">0.35</span>
+    </div>
+    <div class="gn-sl-row">
+      <span>Node repulsion</span>
+      <input type="range" id="ctrl-nd" min="50" max="600" value="280" step="10" oninput="gnApplyPhysics()">
+      <span id="ctrl-nd-v">280</span>
+    </div>
+    <div class="gn-sl-row">
+      <span>Center pull</span>
+      <input type="range" id="ctrl-cg" min="0" max="50" value="0" step="1" oninput="gnApplyPhysics()">
+      <span id="ctrl-cg-v">0.00</span>
+    </div>
+    <div class="gn-sl-row">
+      <span>Damping</span>
+      <input type="range" id="ctrl-dm" min="10" max="95" value="50" step="5" oninput="gnApplyPhysics()">
+      <span id="ctrl-dm-v">0.50</span>
+    </div>
+    <div id="gn-ctrl-btns">
+      <button class="gn-ctrl-btn" onclick="network.stabilize(300)">&#8635; Re-stabilize</button>
+      <button class="gn-ctrl-btn" id="gn-pause-btn" onclick="gnTogglePhysics()">&#10074;&#10074; Pause</button>
+      <button class="gn-ctrl-btn" onclick="gnFitView()">&#8982; Fit</button>
+    </div>
+  </div>
+</div>
 
 <!-- Popup HTML -->
 <div id="gn-popup">
@@ -623,6 +715,55 @@ network.on("selectNode", function(p) {{
   var rect = document.getElementById("mynetwork").getBoundingClientRect();
   gnShow(id, rect.left + dom.x, rect.top + dom.y);
 }});
+
+// ── Mount title + controls inside #mynetwork after DOM ready ────────────────
+(function mountOverlays() {{
+  var mn = document.getElementById("mynetwork");
+  if (!mn) {{ setTimeout(mountOverlays, 80); return; }}
+  mn.style.position = "relative";
+  mn.appendChild(document.getElementById("gn-title"));
+  mn.appendChild(document.getElementById("gn-ctrl"));
+  document.getElementById("gn-title").style.display = "block";
+}})();
+
+// ── Physics controls ────────────────────────────────────────────────────────
+var _physicsOn = true;
+
+function gnCtrlToggle() {{
+  var body  = document.getElementById("gn-ctrl-body");
+  var arrow = document.getElementById("gn-ctrl-arrow");
+  var open  = body.style.display !== "none";
+  body.style.display  = open ? "none"  : "block";
+  arrow.innerHTML     = open ? "&#9660;" : "&#9650;";
+}}
+
+function gnApplyPhysics() {{
+  var sl = parseInt(document.getElementById("ctrl-sl").value);
+  var sc = parseInt(document.getElementById("ctrl-sc").value) / 100;
+  var nd = parseInt(document.getElementById("ctrl-nd").value);
+  var cg = parseInt(document.getElementById("ctrl-cg").value) / 100;
+  var dm = parseInt(document.getElementById("ctrl-dm").value) / 100;
+  document.getElementById("ctrl-sl-v").textContent = sl;
+  document.getElementById("ctrl-sc-v").textContent = sc.toFixed(2);
+  document.getElementById("ctrl-nd-v").textContent = nd;
+  document.getElementById("ctrl-cg-v").textContent = cg.toFixed(2);
+  document.getElementById("ctrl-dm-v").textContent = dm.toFixed(2);
+  network.setOptions({{ physics: {{ repulsion: {{
+    springLength: sl, springConstant: sc,
+    nodeDistance: nd, centralGravity: cg, damping: dm
+  }} }} }});
+}}
+
+function gnTogglePhysics() {{
+  _physicsOn = !_physicsOn;
+  network.setOptions({{ physics: {{ enabled: _physicsOn }} }});
+  document.getElementById("gn-pause-btn").innerHTML =
+    _physicsOn ? "&#10074;&#10074; Pause" : "&#9654; Resume";
+}}
+
+function gnFitView() {{
+  network.fit({{ animation: {{ duration: 500, easingFunction: "easeInOutQuad" }} }});
+}}
 </script>
 """
     return html.replace("</body>", code + "\n</body>")
@@ -636,7 +777,7 @@ if filtered:
     net  = build_network(filtered)
     html = net.generate_html()
     html = inject_interactions(html, filtered)
-    components.html(html, height=760, scrolling=False)
+    components.html(html, height=800, scrolling=False)
 else:
     st.warning("No guests match the current filters.")
 
@@ -678,4 +819,4 @@ else:
     st.info("No guests to display.")
 
 st.divider()
-st.caption("Built by OpenClaw 🦞 | Rafael & Catarina | v6.0.0")
+st.caption("Built by OpenClaw 🦞 | Rafael & Catarina | v6.1.0")
