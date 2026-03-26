@@ -236,29 +236,9 @@ def _guest_persons(guest: dict) -> set:
 _BRIDGE_DIR = pathlib.Path(__file__).parent / "bridge"
 _BRIDGE = components.declare_component("wgn_bridge", path=str(_BRIDGE_DIR))
 
-# Render bridge (invisible) and pick up any pending guest edits from the popup.
-# The bridge sends with dataType:"json" so Streamlit auto-parses — _pending_raw
-# arrives as a Python list/dict, NOT a string.
-_pending_raw = _BRIDGE(key="wgn_bridge")
-if _pending_raw:
-    try:
-        if isinstance(_pending_raw, str):
-            updated = json.loads(_pending_raw)
-        elif isinstance(_pending_raw, list):
-            updated = _pending_raw
-        elif isinstance(_pending_raw, dict):
-            updated = [_pending_raw]
-        else:
-            updated = []
-        for u in updated:
-            g = next((x for x in st.session_state.get("guests", []) if x["name"] == u.get("name")), None)
-            if g:
-                for k in ("priority", "groups", "notes", "rsvp", "archived"):
-                    if k in u:
-                        g[k] = u[k]
-                save_guest(g)
-    except Exception:
-        pass
+# Bridge is now rendered in the NETWORK RENDER section below (it hosts the graph
+# as an inner iframe, so gnSave postMessages reach it directly as parent).
+# No top-of-script bridge call needed.
 
 # =============================================================================
 # SESSION STATE
@@ -865,9 +845,7 @@ function gnArchive() {{
     edges.update({{id: eId, hidden: true}});
   }});
   gnClose();
-  try {{
-    window.parent.sessionStorage.setItem("wgn_save", JSON.stringify([g]));
-  }} catch(e) {{}}
+  window.parent.postMessage({{type:"gnSave", data:[g]}}, "*");
 }}
 
 function gnSave() {{
@@ -913,10 +891,8 @@ function gnSave() {{
     nRow.style.display = "none";
   }}
 
-  // Persist only the changed guest to sessionStorage → bridge picks up → Python reruns
-  try {{
-    window.parent.sessionStorage.setItem("wgn_save", JSON.stringify([g]));
-  }} catch(e) {{}}
+  // Send save to bridge (parent iframe) → bridge calls Streamlit.setComponentValue → Python rerun
+  window.parent.postMessage({{type:"gnSave", data:[g]}}, "*");
 
   // Return to view mode
   gnCancelEdit();
@@ -1095,9 +1071,34 @@ if filtered:
     net, hub_positions = build_network(filtered)
     html = net.generate_html()
     html = inject_interactions(html, filtered, hub_positions)
-    components.html(html, height=820, scrolling=False)
 else:
+    html = ""
+
+# Bridge hosts the graph in an inner iframe.  When the user saves/archives in
+# the popup, the inner frame posts {type:"gnSave", data:[guest]} to the bridge
+# (its parent), which relays it here via Streamlit.setComponentValue.
+_graph_result = _BRIDGE(key="wgn_bridge", graph_html=html, height=820)
+
+if not filtered:
     st.warning("No guests match the current filters.")
+
+# Process any popup save that arrived via the bridge
+if _graph_result and isinstance(_graph_result, (list, dict)):
+    try:
+        _updates = _graph_result if isinstance(_graph_result, list) else [_graph_result]
+        for _u in _updates:
+            _g = next(
+                (x for x in st.session_state.guests if x["name"] == _u.get("name")),
+                None,
+            )
+            if _g:
+                for _k in ("priority", "groups", "notes", "rsvp", "archived"):
+                    if _k in _u:
+                        _g[_k] = _u[_k]
+                save_guest(_g)
+        st.rerun()
+    except Exception:
+        pass
 
 # =============================================================================
 # GUEST TABLE
