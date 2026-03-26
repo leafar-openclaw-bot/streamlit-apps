@@ -79,6 +79,23 @@ def archive_guest(name: str, archived: bool) -> None:
     get_supabase().table("guests").update({"archived": archived}).eq("name", name).execute()
 
 # =============================================================================
+# GROUP DATA — groups table drives the network hubs
+# =============================================================================
+
+def load_groups() -> list[dict]:
+    """Fetch all groups from Supabase, ordered by name."""
+    return get_supabase().table("groups").select("*").order("name").execute().data
+
+def save_group(group: dict) -> None:
+    """Upsert a group record (match on name)."""
+    row = {k: group[k] for k in ("name", "side", "color") if k in group}
+    get_supabase().table("groups").upsert(row, on_conflict="name").execute()
+
+def delete_group_record(name: str) -> None:
+    """Delete a group record from Supabase (guest cascade handled separately)."""
+    get_supabase().table("groups").delete().eq("name", name).execute()
+
+# =============================================================================
 # GUEST DATA — loaded from Supabase (falls back to guests.json for local dev)
 # =============================================================================
 
@@ -145,6 +162,58 @@ ALL_GROUPS = sorted([
     "Friends", "Common Friends", "Work", "Other",
 ])
 
+# Default side assignment for the built-in groups (used when seeding a blank DB)
+_DEFAULT_GROUP_SIDES = {
+    "Family":                "Common",
+    "Basic School":          "Rafael",
+    "Secondary School":      "Rafael",
+    "University":            "Common",
+    "Reboleira Parish":      "Rafael",
+    "Erasmus Milan":         "Rafael",
+    "Erasmus Netherlands":   "Rafael",
+    "Work (Planos Ótimos)":  "Rafael",
+    "Work (Sonant)":         "Rafael",
+    "Special (Reciprocity)": "Rafael",
+    "Friends":               "Catarina",
+    "Work":                  "Catarina",
+    "Common Friends":        "Common",
+    "Other":                 "Rafael",
+}
+
+def _load_initial_groups() -> list[dict]:
+    """Load groups from Supabase. If the table is empty, seed it from defaults."""
+    try:
+        rows = load_groups()
+        if rows:
+            return rows
+        # Empty DB — seed with built-in defaults
+        defaults = [
+            {"name": name, "color": color, "side": _DEFAULT_GROUP_SIDES.get(name, "Rafael")}
+            for name, color in GROUP_HUB_COLORS.items()
+        ]
+        for g in defaults:
+            save_group(g)
+        return defaults
+    except Exception:
+        pass
+    # DB offline — return in-memory defaults
+    return [
+        {"name": name, "color": color, "side": _DEFAULT_GROUP_SIDES.get(name, "Rafael")}
+        for name, color in GROUP_HUB_COLORS.items()
+    ]
+
+def _get_hub_colors() -> dict:
+    return {g["name"]: g.get("color", "#607D8B") for g in st.session_state.get("groups", [])}
+
+def _get_guest_colors() -> dict:
+    return {name: _lighter(col) for name, col in _get_hub_colors().items()}
+
+def _get_all_groups() -> list[str]:
+    return sorted(g["name"] for g in st.session_state.get("groups", []))
+
+def _get_side_map() -> dict:
+    return {g["name"]: g.get("side", "Rafael") for g in st.session_state.get("groups", [])}
+
 # =============================================================================
 # BRIDGE COMPONENT — receives inline popup edits from JS via sessionStorage
 # =============================================================================
@@ -173,6 +242,8 @@ if _pending_raw and isinstance(_pending_raw, str):
 
 if "guests" not in st.session_state:
     st.session_state.guests = _load_initial()
+if "groups" not in st.session_state:
+    st.session_state.groups = _load_initial_groups()
 
 # =============================================================================
 # SIDEBAR
@@ -187,7 +258,8 @@ with st.sidebar:
         st.subheader("Add New Guest")
         new_name     = st.text_input("Name", placeholder="Full name")
         new_side     = st.selectbox("Side", ["Rafael", "Catarina", "Common"])
-        new_groups   = st.multiselect("Groups", ALL_GROUPS, default=["Family"])
+        _dyn_groups  = _get_all_groups()
+        new_groups   = st.multiselect("Groups", _dyn_groups, default=["Family"] if "Family" in _dyn_groups else _dyn_groups[:1])
         new_priority = st.selectbox("Priority", ["High", "Medium", "Low"])
         new_notes    = st.text_input("Notes", placeholder="Optional notes")
         if st.form_submit_button("Add Guest") and new_name:
@@ -213,7 +285,8 @@ with st.sidebar:
                                       default=["Rafael", "Catarina", "Common"])
     filter_priority = st.multiselect("Priority", ["High", "Medium", "Low"],
                                       default=["High", "Medium", "Low"])
-    filter_group    = st.multiselect("Group", ALL_GROUPS, default=ALL_GROUPS)
+    _dyn_all        = _get_all_groups()
+    filter_group    = st.multiselect("Group", _dyn_all, default=_dyn_all)
     filter_rsvp     = st.multiselect("RSVP", ["Confirmed", "Pending", "Declined"],
                                       default=["Confirmed", "Pending", "Declined"])
 
@@ -344,20 +417,14 @@ def build_network(guests: list) -> Network:
                      font={"size": 14, "bold": True, "color": "white"},
                      title="", x=x, y=0, physics=False)
 
-    all_grps = sorted(set(grp for g in guests for grp in g["groups"]))
+    hub_colors   = _get_hub_colors()
+    guest_colors = _get_guest_colors()
+    side_map     = _get_side_map()   # explicit side from groups table — no inference
+
+    all_grps = sorted(set(grp for g in guests for grp in g.get("groups", [])))
 
     def grp_side(grp: str) -> str:
-        if "Common" in grp:
-            return "Common"
-        in_grp = [g for g in guests if grp in g.get("groups", [])]
-        if not in_grp:
-            return "Rafael"
-        sides = {g["side"] for g in in_grp}
-        if "Rafael" in sides and "Catarina" in sides:
-            return "Common"
-        if sides == {"Catarina"}:
-            return "Catarina"
-        return "Rafael"
+        return side_map.get(grp, "Rafael")
 
     grp_side_map = {grp: grp_side(grp) for grp in all_grps}
     rafael_grps   = [g for g in all_grps if grp_side_map[g] == "Rafael"]
@@ -383,7 +450,7 @@ def build_network(guests: list) -> Network:
             py = int(cy + radius * math.sin(math.radians(angle_deg)))
             hub_positions[f"__group__{grp}"] = {"x": px, "y": py}
             side   = grp_side_map.get(grp, "Rafael")
-            bg     = GROUP_HUB_COLORS.get(grp, "#607D8B")
+            bg     = hub_colors.get(grp, "#607D8B")
             net.add_node(
                 f"__group__{grp}", label=grp,
                 color={"background": bg, "border": SIDE_BORDER[side],
@@ -410,7 +477,7 @@ def build_network(guests: list) -> Network:
 
     for g in guests:
         primary    = g["groups"][0] if g["groups"] else "Family"
-        node_color = GROUP_GUEST_COLORS.get(primary, "#90A4AE")
+        node_color = guest_colors.get(primary, "#90A4AE")
         rsvp_color = RSVP_BORDER.get(g.get("rsvp", "Pending"), "#FFB300")
         net.add_node(
             g["name"], label=g["name"],
@@ -439,10 +506,10 @@ def inject_interactions(html: str, guests: list, hub_positions: dict) -> str:
     """
     guests_map         = {g["name"]: g for g in guests}
     guests_json        = json.dumps(guests_map,       ensure_ascii=False)
-    hub_colors_json    = json.dumps(GROUP_HUB_COLORS,    ensure_ascii=False)
-    guest_colors_json  = json.dumps(GROUP_GUEST_COLORS,  ensure_ascii=False)
+    hub_colors_json    = json.dumps(_get_hub_colors(),   ensure_ascii=False)
+    guest_colors_json  = json.dumps(_get_guest_colors(), ensure_ascii=False)
     priority_json      = json.dumps(PRIORITY_SIZE,        ensure_ascii=False)
-    all_groups_json    = json.dumps(ALL_GROUPS,           ensure_ascii=False)
+    all_groups_json    = json.dumps(_get_all_groups(),    ensure_ascii=False)
     rsvp_colors_json   = json.dumps(RSVP_BORDER,          ensure_ascii=False)
     hub_positions_json = json.dumps(hub_positions,        ensure_ascii=False)
 
@@ -1039,4 +1106,129 @@ else:
     st.info("No guests to display.")
 
 st.divider()
-st.caption("Built by OpenClaw 🦞 | Rafael & Catarina | v8.0.0")
+
+# =============================================================================
+# SOCIAL GROUP MANAGEMENT
+# =============================================================================
+
+st.subheader("⚡ Social Group Management")
+st.caption("Groups define the hub nodes in the network. Assigning a side controls which arc the hub appears on.")
+
+_grps = st.session_state.groups
+SIDES = ["Rafael", "Catarina", "Common"]
+
+# ── Group table ───────────────────────────────────────────────────────────────
+if _grps:
+    swatch_rows = "".join(
+        f"<tr style='line-height:1.8'>"
+        f"<td style='padding:2px 10px 2px 0'>"
+        f"<span style='display:inline-block;width:18px;height:18px;border-radius:4px;"
+        f"background:{g['color']};vertical-align:middle'></span></td>"
+        f"<td style='padding:2px 14px 2px 0'>{g['name']}</td>"
+        f"<td style='padding:2px 0;color:#aaa'>{g.get('side','Rafael')}</td>"
+        f"</tr>"
+        for g in sorted(_grps, key=lambda x: (x.get("side","Rafael"), x["name"]))
+    )
+    st.markdown(
+        f"<table style='font-size:13px;border-collapse:collapse'>"
+        f"<tr><th style='text-align:left;padding:2px 10px 6px 0;color:#888'>Color</th>"
+        f"<th style='text-align:left;padding:2px 14px 6px 0;color:#888'>Name</th>"
+        f"<th style='text-align:left;padding:2px 0 6px;color:#888'>Side</th></tr>"
+        f"{swatch_rows}</table>",
+        unsafe_allow_html=True,
+    )
+else:
+    st.info("No groups configured.")
+
+st.write("")
+
+col_add, col_edit = st.columns(2)
+
+# ── Add group ─────────────────────────────────────────────────────────────────
+with col_add:
+    with st.expander("➕ Add Group"):
+        with st.form("add_group_form"):
+            ng_name  = st.text_input("Name", placeholder="e.g. Tennis Club")
+            ng_side  = st.selectbox("Side", SIDES)
+            ng_color = st.color_picker("Colour", "#607D8B")
+            if st.form_submit_button("Add"):
+                if not ng_name.strip():
+                    st.error("Name is required.")
+                elif ng_name in {g["name"] for g in _grps}:
+                    st.error(f"'{ng_name}' already exists.")
+                else:
+                    ng = {"name": ng_name.strip(), "side": ng_side, "color": ng_color}
+                    st.session_state.groups.append(ng)
+                    try:
+                        save_group(ng)
+                    except Exception as e:
+                        st.warning(f"DB error: {e}")
+                    st.rerun()
+
+# ── Edit / Delete group ───────────────────────────────────────────────────────
+with col_edit:
+    with st.expander("✏️ Edit / Delete Group"):
+        if _grps:
+            eg_name = st.selectbox(
+                "Select group",
+                [g["name"] for g in sorted(_grps, key=lambda x: x["name"])],
+                key="eg_select",
+            )
+            eg = next(g for g in _grps if g["name"] == eg_name)
+
+            with st.form("edit_group_form"):
+                new_eg_name  = st.text_input("Name",   value=eg["name"])
+                new_eg_side  = st.selectbox("Side", SIDES, index=SIDES.index(eg.get("side", "Rafael")))
+                new_eg_color = st.color_picker("Colour", value=eg.get("color", "#607D8B"))
+                if st.form_submit_button("💾 Save"):
+                    old_name = eg_name
+                    new_name = new_eg_name.strip()
+                    if not new_name:
+                        st.error("Name is required.")
+                    else:
+                        if new_name != old_name:
+                            # Rename in all guests (session + DB)
+                            for guest in st.session_state.guests:
+                                if old_name in guest.get("groups", []):
+                                    guest["groups"] = [
+                                        new_name if gr == old_name else gr
+                                        for gr in guest["groups"]
+                                    ]
+                                    try:
+                                        save_guest(guest)
+                                    except Exception:
+                                        pass
+                            # Delete old record; upsert will create new name
+                            try:
+                                delete_group_record(old_name)
+                            except Exception:
+                                pass
+                            eg["name"] = new_name
+                        eg["side"]  = new_eg_side
+                        eg["color"] = new_eg_color
+                        try:
+                            save_group(eg)
+                        except Exception as e:
+                            st.warning(f"DB error: {e}")
+                        st.rerun()
+
+            if st.button(f"🗑️ Delete '{eg_name}'", type="secondary", key="del_grp_btn"):
+                # Remove group from all guests
+                for guest in st.session_state.guests:
+                    if eg_name in guest.get("groups", []):
+                        guest["groups"] = [gr for gr in guest["groups"] if gr != eg_name]
+                        try:
+                            save_guest(guest)
+                        except Exception:
+                            pass
+                st.session_state.groups = [g for g in _grps if g["name"] != eg_name]
+                try:
+                    delete_group_record(eg_name)
+                except Exception as e:
+                    st.warning(f"DB error: {e}")
+                st.rerun()
+        else:
+            st.info("No groups to edit.")
+
+st.divider()
+st.caption("Built by OpenClaw 🦞 | Rafael & Catarina | v9.0.0")
