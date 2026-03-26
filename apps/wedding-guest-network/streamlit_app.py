@@ -236,18 +236,27 @@ def _guest_persons(guest: dict) -> set:
 _BRIDGE_DIR = pathlib.Path(__file__).parent / "bridge"
 _BRIDGE = components.declare_component("wgn_bridge", path=str(_BRIDGE_DIR))
 
-# Render bridge (invisible) and pick up any pending guest edits from the popup
+# Render bridge (invisible) and pick up any pending guest edits from the popup.
+# The bridge sends with dataType:"json" so Streamlit auto-parses — _pending_raw
+# arrives as a Python list/dict, NOT a string.
 _pending_raw = _BRIDGE(key="wgn_bridge")
-if _pending_raw and isinstance(_pending_raw, str):
+if _pending_raw:
     try:
-        updated = json.loads(_pending_raw)
-        for u in (updated if isinstance(updated, list) else [updated]):
+        if isinstance(_pending_raw, str):
+            updated = json.loads(_pending_raw)
+        elif isinstance(_pending_raw, list):
+            updated = _pending_raw
+        elif isinstance(_pending_raw, dict):
+            updated = [_pending_raw]
+        else:
+            updated = []
+        for u in updated:
             g = next((x for x in st.session_state.get("guests", []) if x["name"] == u.get("name")), None)
             if g:
                 for k in ("priority", "groups", "notes", "rsvp", "archived"):
                     if k in u:
                         g[k] = u[k]
-                save_guest(g)   # persist to Supabase
+                save_guest(g)
     except Exception:
         pass
 
@@ -1130,6 +1139,52 @@ if df_rows:
     )
 else:
     st.info("No guests to display.")
+
+# =============================================================================
+# EDIT GUEST
+# =============================================================================
+
+st.divider()
+st.subheader("Edit Guest")
+
+_all_guest_names = sorted(g["name"] for g in st.session_state.guests if not g.get("archived", False))
+if _all_guest_names:
+    _eg_name = st.selectbox("Select guest to edit", _all_guest_names, key="edit_guest_sel")
+    _eg = next((g for g in st.session_state.guests if g["name"] == _eg_name), None)
+    if _eg:
+        with st.form("edit_guest_form"):
+            _dyn_grps   = _get_all_groups()
+            eg_groups   = st.multiselect("Groups",   _dyn_grps, default=[x for x in _eg.get("groups", []) if x in _dyn_grps])
+            eg_priority = st.selectbox("Priority",  ["High", "Medium", "Low"],  index=["High","Medium","Low"].index(_eg.get("priority","Medium")))
+            eg_rsvp     = st.selectbox("RSVP",      ["Pending","Confirmed","Declined"], index=["Pending","Confirmed","Declined"].index(_eg.get("rsvp","Pending")))
+            eg_notes    = st.text_input("Notes",    value=_eg.get("notes",""))
+            _col1, _col2 = st.columns(2)
+            with _col1:
+                _save = st.form_submit_button("💾 Save")
+            with _col2:
+                _archive = st.form_submit_button("📦 Archive")
+
+        if _save:
+            _eg["groups"]   = eg_groups
+            _eg["priority"] = eg_priority
+            _eg["rsvp"]     = eg_rsvp
+            _eg["notes"]    = eg_notes
+            try:
+                save_guest(_eg)
+                st.success(f"Saved {_eg_name}.")
+            except Exception as e:
+                st.error(f"DB error: {e}")
+            st.rerun()
+
+        if _archive:
+            _eg["archived"] = True
+            try:
+                save_guest(_eg)
+            except Exception:
+                pass
+            st.rerun()
+else:
+    st.info("No active guests to edit.")
 
 st.divider()
 
