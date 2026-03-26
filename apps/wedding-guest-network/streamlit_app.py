@@ -367,35 +367,35 @@ def build_network(guests: list) -> Network:
     def arc_span_deg(n: int) -> float:
         return min(170.0, max(0.0, (n - 1) * 22.0))
 
+    hub_positions: dict = {
+        "__Rafael__":   {"x": -420, "y": 0},
+        "__Catarina__": {"x":  420, "y": 0},
+    }
+
     def add_group_arc(group_list, cx, cy, radius, center_deg):
         n = len(group_list)
         if n == 0:
             return
         span = arc_span_deg(n)
         for i, grp in enumerate(group_list):
-            if n == 1:
-                angle_deg = center_deg
-            else:
-                angle_deg = center_deg - span / 2 + span * i / (n - 1)
+            angle_deg = center_deg if n == 1 else center_deg - span / 2 + span * i / (n - 1)
+            px = int(cx + radius * math.cos(math.radians(angle_deg)))
+            py = int(cy + radius * math.sin(math.radians(angle_deg)))
+            hub_positions[f"__group__{grp}"] = {"x": px, "y": py}
             side   = grp_side_map.get(grp, "Rafael")
             bg     = GROUP_HUB_COLORS.get(grp, "#607D8B")
-            border = SIDE_BORDER[side]
-            shape  = SIDE_SHAPE[side]
             net.add_node(
                 f"__group__{grp}", label=grp,
-                color={"background": bg, "border": border,
+                color={"background": bg, "border": SIDE_BORDER[side],
                        "highlight": {"background": bg, "border": "#ffffff"}},
-                size=26, shape=shape,
+                size=26, shape=SIDE_SHAPE[side],
                 font={"size": 11, "color": "white"},
-                title="",
-                x=int(cx + radius * math.cos(math.radians(angle_deg))),
-                y=int(cy + radius * math.sin(math.radians(angle_deg))),
-                physics=False,
+                title="", x=px, y=py, physics=False,
             )
 
-    add_group_arc(rafael_grps,   -420, 0, 530, 180)
-    add_group_arc(catarina_grps,  420, 0, 530,   0)
-    add_group_arc(common_grps,      0, 0, 620, 270)
+    add_group_arc(rafael_grps,   -420, 0, 500, 180)
+    add_group_arc(catarina_grps,  420, 0, 500,   0)
+    add_group_arc(common_grps,      0, 0, 580, 270)
 
     added_hub_edges = set()
     for g in guests:
@@ -425,10 +425,10 @@ def build_network(guests: list) -> Network:
             net.add_edge(f"__group__{grp}", g["name"],
                          color={"color": node_color, "opacity": 0.6}, width=1)
 
-    return net
+    return net, hub_positions
 
 
-def inject_interactions(html: str, guests: list) -> str:
+def inject_interactions(html: str, guests: list, hub_positions: dict) -> str:
     """
     Inject into the PyVis HTML:
     - Network title overlay
@@ -437,13 +437,14 @@ def inject_interactions(html: str, guests: list) -> str:
     - Rigid drag (hub moves guests; root moves hubs+guests)
     - Double-click group: collapse / expand members
     """
-    guests_map        = {g["name"]: g for g in guests}
-    guests_json       = json.dumps(guests_map,      ensure_ascii=False)
-    hub_colors_json   = json.dumps(GROUP_HUB_COLORS,   ensure_ascii=False)
-    guest_colors_json = json.dumps(GROUP_GUEST_COLORS,  ensure_ascii=False)
-    priority_json     = json.dumps(PRIORITY_SIZE,       ensure_ascii=False)
-    all_groups_json   = json.dumps(ALL_GROUPS,          ensure_ascii=False)
-    rsvp_colors_json  = json.dumps(RSVP_BORDER,         ensure_ascii=False)
+    guests_map         = {g["name"]: g for g in guests}
+    guests_json        = json.dumps(guests_map,       ensure_ascii=False)
+    hub_colors_json    = json.dumps(GROUP_HUB_COLORS,    ensure_ascii=False)
+    guest_colors_json  = json.dumps(GROUP_GUEST_COLORS,  ensure_ascii=False)
+    priority_json      = json.dumps(PRIORITY_SIZE,        ensure_ascii=False)
+    all_groups_json    = json.dumps(ALL_GROUPS,           ensure_ascii=False)
+    rsvp_colors_json   = json.dumps(RSVP_BORDER,          ensure_ascii=False)
+    hub_positions_json = json.dumps(hub_positions,        ensure_ascii=False)
 
     code = f"""
 <style>
@@ -644,12 +645,13 @@ def inject_interactions(html: str, guests: list) -> str:
 
 <script>
 // ── Lookup tables (from Python) ──────────────────────────────────────────────
-var _GN          = {guests_json};
-var _HUB_COLORS  = {hub_colors_json};
-var _GUEST_COLORS= {guest_colors_json};
-var _PSIZES      = {priority_json};
-var _ALL_GROUPS  = {all_groups_json};
-var _RSVP_COLORS = {rsvp_colors_json};
+var _GN           = {guests_json};
+var _HUB_COLORS   = {hub_colors_json};
+var _GUEST_COLORS = {guest_colors_json};
+var _PSIZES       = {priority_json};
+var _ALL_GROUPS   = {all_groups_json};
+var _RSVP_COLORS  = {rsvp_colors_json};
+var _HUB_POS      = {hub_positions_json};
 
 // ── Popup state ──────────────────────────────────────────────────────────────
 var _gnSel    = null;
@@ -908,6 +910,20 @@ network.on("selectNode", function(p) {{
   gnShow(id, rect.left + dom.x, rect.top + dom.y);
 }});
 
+// ── Enforce fixed hub positions (override any vis.js layout drift) ───────────
+// vis.js may drift physics=false nodes during stabilization unless fixed:true.
+// We re-pin every hub to its Python-computed position before AND after stabilization.
+function gnEnforceHubPositions() {{
+  var updates = [];
+  for (var id in _HUB_POS) {{
+    var p = _HUB_POS[id];
+    updates.push({{id: id, x: p.x, y: p.y, physics: false, fixed: {{x: true, y: true}}}});
+  }}
+  nodes.update(updates);
+}}
+gnEnforceHubPositions();
+network.on("stabilizationIterationsDone", gnEnforceHubPositions);
+
 // ── Mount title + controls inside #mynetwork after DOM ready ────────────────
 (function mountOverlays() {{
   var mn = document.getElementById("mynetwork");
@@ -966,10 +982,10 @@ function gnFitView() {{
 # =============================================================================
 
 if filtered:
-    net  = build_network(filtered)
+    net, hub_positions = build_network(filtered)
     html = net.generate_html()
-    html = inject_interactions(html, filtered)
-    components.html(html, height=800, scrolling=False)
+    html = inject_interactions(html, filtered, hub_positions)
+    components.html(html, height=820, scrolling=False)
 else:
     st.warning("No guests match the current filters.")
 
