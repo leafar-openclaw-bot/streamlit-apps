@@ -871,9 +871,12 @@ var _collapsed = {{}}, _collData = {{}};
 
 network.on("doubleClick", function(p) {{
   gnClose();
-  if (!p.nodes.length) return;
-  var id = p.nodes[0];
-  if (!id.startsWith("__group__")) return;
+  // physics:false nodes aren't in vis.js's spatial index until dragged,
+  // so p.nodes may be empty — fall back to raw DOM hit-test.
+  var id = (p.nodes && p.nodes.length > 0)
+    ? p.nodes[0]
+    : network.getNodeAt(p.pointer.DOM);
+  if (!id || !id.toString().startsWith("__group__")) return;
   var nd = nodes.get(id);
   var baseLabel = nd ? nd.label.replace(/\\n\\(\\d+\\)$/, "") : id.replace("__group__","");
 
