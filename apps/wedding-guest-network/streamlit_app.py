@@ -911,7 +911,7 @@ network.on("selectNode", function(p) {{
 }});
 
 // ── Initialise hub positions (Python-computed arcs) ──────────────────────────
-// Sets x/y before vis.js stabilization runs. No fixed:{} so hubs remain
+// Sets x/y before vis.js stabilization runs. No fixed:{{}} so hubs remain
 // draggable and double-clickable; physics:false keeps them from being
 // pushed around by the force simulation after they're placed.
 (function gnInitHubPositions() {{
