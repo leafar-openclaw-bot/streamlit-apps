@@ -910,19 +910,18 @@ network.on("selectNode", function(p) {{
   gnShow(id, rect.left + dom.x, rect.top + dom.y);
 }});
 
-// ── Enforce fixed hub positions (override any vis.js layout drift) ───────────
-// vis.js may drift physics=false nodes during stabilization unless fixed:true.
-// We re-pin every hub to its Python-computed position before AND after stabilization.
-function gnEnforceHubPositions() {{
+// ── Initialise hub positions (Python-computed arcs) ──────────────────────────
+// Sets x/y before vis.js stabilization runs. No fixed:{} so hubs remain
+// draggable and double-clickable; physics:false keeps them from being
+// pushed around by the force simulation after they're placed.
+(function gnInitHubPositions() {{
   var updates = [];
   for (var id in _HUB_POS) {{
     var p = _HUB_POS[id];
-    updates.push({{id: id, x: p.x, y: p.y, physics: false, fixed: {{x: true, y: true}}}});
+    updates.push({{id: id, x: p.x, y: p.y, physics: false}});
   }}
   nodes.update(updates);
-}}
-gnEnforceHubPositions();
-network.on("stabilizationIterationsDone", gnEnforceHubPositions);
+}})();
 
 // ── Mount title + controls inside #mynetwork after DOM ready ────────────────
 (function mountOverlays() {{
