@@ -66,9 +66,8 @@ def load_guests() -> list[dict]:
     return rows
 
 def save_guest(guest: dict) -> None:
-    """Upsert a single guest record. Side is derived from group membership."""
+    """Upsert a single guest record."""
     row = {k: guest[k] for k in ("name", "groups", "priority", "notes", "rsvp", "archived") if k in guest}
-    row["side"] = _derive_side(row.get("groups", []))
     get_supabase().table("guests").upsert(row, on_conflict="name").execute()
 
 def delete_guest(name: str) -> None:
@@ -610,6 +609,9 @@ def inject_interactions(html: str, guests: list, hub_positions: dict) -> str:
   color:#eee; font-size:13px; padding:5px 8px; width:100%; box-sizing:border-box;
 }}
 .gn-row input:focus, .gn-row select:focus {{ outline:none; border-color:#1E88E5; }}
+.gn-row select[multiple] {{ padding:2px; }}
+.gn-row select[multiple] option {{ padding:4px 8px; border-radius:3px; cursor:pointer; }}
+.gn-row select[multiple] option:checked {{ background:#1E88E5; color:#fff; }}
 /* ── Buttons ── */
 .gn-btn-row {{ display:flex; gap:8px; margin-top:14px; }}
 .gn-btn    {{ flex:1; padding:8px; border:none; border-radius:6px; cursor:pointer; font-size:12px; font-weight:bold; }}
@@ -702,8 +704,8 @@ def inject_interactions(html: str, guests: list, hub_positions: dict) -> str:
       </select>
     </div>
     <div class="gn-row">
-      <label>Groups (comma-separated)</label>
-      <input id="gn-eg" type="text" placeholder="Family, University, ...">
+      <label>Groups</label>
+      <select id="gn-eg" multiple size="5"></select>
     </div>
     <div class="gn-row">
       <label>Notes</label>
@@ -725,6 +727,16 @@ var _PSIZES       = {priority_json};
 var _ALL_GROUPS   = {all_groups_json};
 var _RSVP_COLORS  = {rsvp_colors_json};
 var _HUB_POS      = {hub_positions_json};
+
+// ── Populate groups multi-select on load ─────────────────────────────────────
+(function gnBuildGroupSelect() {{
+  var sel = document.getElementById("gn-eg");
+  _ALL_GROUPS.forEach(function(grp) {{
+    var opt = document.createElement("option");
+    opt.value = grp; opt.textContent = grp;
+    sel.appendChild(opt);
+  }});
+}})();
 
 // ── Popup state ──────────────────────────────────────────────────────────────
 var _gnSel    = null;
@@ -795,7 +807,11 @@ function gnStartEdit() {{
   if (!g) return;
   document.getElementById("gn-ep").value = g.priority;
   document.getElementById("gn-er").value = g.rsvp || "Pending";
-  document.getElementById("gn-eg").value = (g.groups || []).join(", ");
+  var sel = document.getElementById("gn-eg");
+  var curGroups = new Set(g.groups || []);
+  for (var i = 0; i < sel.options.length; i++) {{
+    sel.options[i].selected = curGroups.has(sel.options[i].value);
+  }}
   document.getElementById("gn-en").value = g.notes || "";
   document.getElementById("gn-view").style.display = "none";
   document.getElementById("gn-edit").style.display = "block";
@@ -835,8 +851,11 @@ function gnSave() {{
   if (!g) return;
   var newPriority = document.getElementById("gn-ep").value;
   var newRsvp     = document.getElementById("gn-er").value;
-  var newGroups   = document.getElementById("gn-eg").value
-                      .split(",").map(function(s){{ return s.trim(); }}).filter(Boolean);
+  var egSel = document.getElementById("gn-eg");
+  var newGroups = [];
+  for (var i = 0; i < egSel.options.length; i++) {{
+    if (egSel.options[i].selected) newGroups.push(egSel.options[i].value);
+  }}
   var newNotes    = document.getElementById("gn-en").value;
 
   // Update in-memory record
