@@ -66,8 +66,9 @@ def load_guests() -> list[dict]:
     return rows
 
 def save_guest(guest: dict) -> None:
-    """Upsert a single guest record (match on name)."""
-    row = {k: guest[k] for k in ("name", "side", "groups", "priority", "notes", "rsvp", "archived") if k in guest}
+    """Upsert a single guest record. Side is derived from group membership."""
+    row = {k: guest[k] for k in ("name", "groups", "priority", "notes", "rsvp", "archived") if k in guest}
+    row["side"] = _derive_side(row.get("groups", []))
     get_supabase().table("guests").upsert(row, on_conflict="name").execute()
 
 def delete_guest(name: str) -> None:
@@ -214,6 +215,21 @@ def _get_all_groups() -> list[str]:
 def _get_side_map() -> dict:
     return {g["name"]: g.get("side", "Rafael") for g in st.session_state.get("groups", [])}
 
+def _derive_side(groups: list) -> str:
+    """Compute the DB 'side' value from a guest's group membership (for schema compat)."""
+    sm = _get_side_map()
+    sides = {sm.get(grp, "Rafael") for grp in groups}
+    if "Rafael" in sides and "Catarina" in sides:
+        return "Common"
+    if sides == {"Catarina"}:
+        return "Catarina"
+    return "Rafael"
+
+def _guest_persons(guest: dict) -> set:
+    """Return the set of persons ('Rafael'/'Catarina'/'Common') a guest touches via groups."""
+    sm = _get_side_map()
+    return {sm.get(grp, "Rafael") for grp in guest.get("groups", [])} or {"Rafael"}
+
 # =============================================================================
 # BRIDGE COMPONENT — receives inline popup edits from JS via sessionStorage
 # =============================================================================
@@ -229,7 +245,7 @@ if _pending_raw and isinstance(_pending_raw, str):
         for u in (updated if isinstance(updated, list) else [updated]):
             g = next((x for x in st.session_state.get("guests", []) if x["name"] == u.get("name")), None)
             if g:
-                for k in ("priority", "groups", "side", "notes", "rsvp", "archived"):
+                for k in ("priority", "groups", "notes", "rsvp", "archived"):
                     if k in u:
                         g[k] = u[k]
                 save_guest(g)   # persist to Supabase
@@ -257,7 +273,6 @@ with st.sidebar:
     with st.form("add_guest_form", clear_on_submit=True):
         st.subheader("Add New Guest")
         new_name     = st.text_input("Name", placeholder="Full name")
-        new_side     = st.selectbox("Side", ["Rafael", "Catarina", "Common"])
         _dyn_groups  = _get_all_groups()
         new_groups   = st.multiselect("Groups", _dyn_groups, default=["Family"] if "Family" in _dyn_groups else _dyn_groups[:1])
         new_priority = st.selectbox("Priority", ["High", "Medium", "Low"])
@@ -268,7 +283,7 @@ with st.sidebar:
                 st.error(f"Already exists: {new_name}")
             else:
                 new_guest = {
-                    "name": new_name, "side": new_side, "groups": new_groups,
+                    "name": new_name, "groups": new_groups,
                     "priority": new_priority, "notes": new_notes,
                     "rsvp": "Pending", "archived": False,
                 }
@@ -281,7 +296,7 @@ with st.sidebar:
 
     st.divider()
     st.subheader("Filters")
-    filter_side     = st.multiselect("Side", ["Rafael", "Catarina", "Common"],
+    filter_person   = st.multiselect("Connected to", ["Rafael", "Catarina", "Common"],
                                       default=["Rafael", "Catarina", "Common"])
     filter_priority = st.multiselect("Priority", ["High", "Medium", "Low"],
                                       default=["High", "Medium", "Low"])
@@ -298,9 +313,8 @@ with st.sidebar:
     st.metric("Total", len(non_archived_gs))
     st.metric("High Priority", sum(1 for g in non_archived_gs if g["priority"] == "High"))
     c1, c2 = st.columns(2)
-    c1.metric("Rafael",   sum(1 for g in non_archived_gs if g["side"] == "Rafael"))
-    c2.metric("Catarina", sum(1 for g in non_archived_gs if g["side"] == "Catarina"))
-    st.metric("Common",   sum(1 for g in non_archived_gs if g["side"] == "Common"))
+    c1.metric("→ Rafael",   sum(1 for g in non_archived_gs if "Rafael"   in _guest_persons(g)))
+    c2.metric("→ Catarina", sum(1 for g in non_archived_gs if "Catarina" in _guest_persons(g)))
 
     # RSVP stats
     st.markdown(
@@ -314,7 +328,7 @@ with st.sidebar:
     csv_rows = [
         {
             "Name": g["name"],
-            "Side": g["side"],
+            "Connected to": ", ".join(sorted(_guest_persons(g))),
             "Groups": ", ".join(g["groups"]),
             "Priority": g["priority"],
             "RSVP": g.get("rsvp", "Pending"),
@@ -349,9 +363,9 @@ with st.sidebar:
 filtered = [
     g for g in st.session_state.guests
     if not g.get("archived", False)
-    and g["side"] in filter_side
+    and bool(_guest_persons(g) & set(filter_person))
     and g["priority"] in filter_priority
-    and any(grp in filter_group for grp in g["groups"])
+    and any(grp in filter_group for grp in g.get("groups", []))
     and g.get("rsvp", "Pending") in filter_rsvp
 ]
 
@@ -464,16 +478,17 @@ def build_network(guests: list) -> Network:
     add_group_arc(catarina_grps,  420, 0, 500,   0)
     add_group_arc(common_grps,      0, 0, 580, 270)
 
-    added_hub_edges = set()
-    for g in guests:
-        for grp in g["groups"]:
-            gid = f"__group__{grp}"
-            if g["side"] in ("Rafael", "Common") and ("R", grp) not in added_hub_edges:
-                net.add_edge("__Rafael__", gid, color="#42A5F5", width=2)
-                added_hub_edges.add(("R", grp))
-            if g["side"] in ("Catarina", "Common") and ("C", grp) not in added_hub_edges:
-                net.add_edge("__Catarina__", gid, color="#F48FB1", width=2)
-                added_hub_edges.add(("C", grp))
+    # Hub edges: driven by the GROUP's side, not the guest's side
+    added_hub_edges: set = set()
+    for grp in all_grps:
+        gid = f"__group__{grp}"
+        gs  = grp_side_map.get(grp, "Rafael")
+        if gs in ("Rafael", "Common") and ("R", grp) not in added_hub_edges:
+            net.add_edge("__Rafael__", gid, color="#42A5F5", width=2)
+            added_hub_edges.add(("R", grp))
+        if gs in ("Catarina", "Common") and ("C", grp) not in added_hub_edges:
+            net.add_edge("__Catarina__", gid, color="#F48FB1", width=2)
+            added_hub_edges.add(("C", grp))
 
     for g in guests:
         primary    = g["groups"][0] if g["groups"] else "Family"
@@ -653,7 +668,6 @@ def inject_interactions(html: str, guests: list, hub_positions: dict) -> str:
 
   <!-- View mode -->
   <div id="gn-view">
-    <div class="gn-field"><span class="gn-lbl">Side</span><span class="gn-val" id="gn-vside"></span></div>
     <div class="gn-field"><span class="gn-lbl">Groups</span><span class="gn-val" id="gn-vgroups"></span></div>
     <div class="gn-field"><span class="gn-lbl">Priority</span><span class="gn-val" id="gn-vpriority"></span></div>
     <div class="gn-field"><span class="gn-lbl">RSVP</span><span class="gn-val" id="gn-vrsvp"></span></div>
@@ -685,14 +699,6 @@ def inject_interactions(html: str, guests: list, hub_positions: dict) -> str:
         <option value="Pending">Pending</option>
         <option value="Confirmed">Confirmed</option>
         <option value="Declined">Declined</option>
-      </select>
-    </div>
-    <div class="gn-row">
-      <label>Side</label>
-      <select id="gn-es">
-        <option value="Rafael">Rafael</option>
-        <option value="Catarina">Catarina</option>
-        <option value="Common">Common</option>
       </select>
     </div>
     <div class="gn-row">
@@ -752,8 +758,6 @@ function gnShow(id, sx, sy) {{
   document.getElementById("gn-name").textContent = g.name;
 
   // View mode fields
-  var sEl = document.getElementById("gn-vside");
-  sEl.textContent = g.side; sEl.className = "gn-val gn-" + g.side;
   document.getElementById("gn-vgroups").textContent = (g.groups || []).join(", ");
   var pEl = document.getElementById("gn-vpriority");
   pEl.textContent = g.priority; pEl.className = "gn-val gn-" + g.priority;
@@ -791,7 +795,6 @@ function gnStartEdit() {{
   if (!g) return;
   document.getElementById("gn-ep").value = g.priority;
   document.getElementById("gn-er").value = g.rsvp || "Pending";
-  document.getElementById("gn-es").value = g.side;
   document.getElementById("gn-eg").value = (g.groups || []).join(", ");
   document.getElementById("gn-en").value = g.notes || "";
   document.getElementById("gn-view").style.display = "none";
@@ -832,7 +835,6 @@ function gnSave() {{
   if (!g) return;
   var newPriority = document.getElementById("gn-ep").value;
   var newRsvp     = document.getElementById("gn-er").value;
-  var newSide     = document.getElementById("gn-es").value;
   var newGroups   = document.getElementById("gn-eg").value
                       .split(",").map(function(s){{ return s.trim(); }}).filter(Boolean);
   var newNotes    = document.getElementById("gn-en").value;
@@ -840,7 +842,6 @@ function gnSave() {{
   // Update in-memory record
   g.priority = newPriority;
   g.rsvp     = newRsvp;
-  g.side     = newSide;
   g.groups   = newGroups;
   g.notes    = newNotes;
 
@@ -857,8 +858,6 @@ function gnSave() {{
 
   // Update view mode fields
   document.getElementById("gn-name").textContent = g.name;
-  var sEl = document.getElementById("gn-vside");
-  sEl.textContent = g.side; sEl.className = "gn-val gn-" + g.side;
   document.getElementById("gn-vgroups").textContent = (g.groups || []).join(", ");
   var pEl = document.getElementById("gn-vpriority");
   pEl.textContent = g.priority; pEl.className = "gn-val gn-" + g.priority;
@@ -1066,7 +1065,7 @@ st.divider()
 st.subheader("Guest List")
 
 df_rows = [
-    {"Name": g["name"], "Side": g["side"],
+    {"Name": g["name"], "Connected to": ", ".join(sorted(_guest_persons(g))),
      "Groups": ", ".join(g["groups"]),
      "Priority": g["priority"],
      "RSVP": g.get("rsvp", "Pending"),
@@ -1078,12 +1077,7 @@ if df_rows:
     df    = pd.DataFrame(df_rows)
     p_ord = {"High": 0, "Medium": 1, "Low": 2}
     df["_p"] = df["Priority"].map(p_ord)
-    df = df.sort_values(["Side", "_p", "Groups", "Name"]).drop("_p", axis=1)
-
-    def color_side(v):
-        if v == "Rafael":   return "background-color:#bbdefb;color:#0d47a1"
-        if v == "Catarina": return "background-color:#f8bbd9;color:#ad1457"
-        return "background-color:#e1bee7;color:#7b1fa2"
+    df = df.sort_values(["Connected to", "_p", "Groups", "Name"]).drop("_p", axis=1)
 
     def color_priority(v):
         if v == "High":   return "background-color:#c8e6c9;color:#2e7d32"
@@ -1097,7 +1091,6 @@ if df_rows:
 
     st.dataframe(
         df.style
-          .map(color_side, subset=["Side"])
           .map(color_priority, subset=["Priority"])
           .map(color_rsvp, subset=["RSVP"]),
         hide_index=True,
