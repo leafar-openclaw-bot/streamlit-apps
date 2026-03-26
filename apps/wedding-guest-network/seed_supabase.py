@@ -22,10 +22,27 @@ Run this ONCE after creating the Supabase table with:
 import json, os, pathlib
 from supabase import create_client
 
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://YOUR_PROJECT_ID.supabase.co")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "YOUR_ANON_KEY")
-
 HERE = pathlib.Path(__file__).parent
+
+def _read_secrets_toml():
+    """Read url/key from .streamlit/secrets.toml if it exists."""
+    toml_path = HERE / ".streamlit" / "secrets.toml"
+    if not toml_path.exists():
+        return None, None
+    text = toml_path.read_text(encoding="utf-8")
+    url = key = None
+    for line in text.splitlines():
+        line = line.strip()
+        if line.startswith("url") and "=" in line:
+            url = line.split("=", 1)[1].strip().strip('"')
+        elif line.startswith("key") and "=" in line:
+            key = line.split("=", 1)[1].strip().strip('"')
+    return url, key
+
+_toml_url, _toml_key = _read_secrets_toml()
+SUPABASE_URL = os.environ.get("SUPABASE_URL") or _toml_url or "https://YOUR_PROJECT_ID.supabase.co"
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY") or _toml_key or "YOUR_ANON_KEY"
+
 with open(HERE / "guests.json", encoding="utf-8") as f:
     guests = json.load(f)
 

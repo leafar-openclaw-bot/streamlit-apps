@@ -3,8 +3,9 @@ Wedding Guest Network Visualizer
 PyVis force graph: Groom/Bride → Social Group hubs → Guests.
 Built by OpenClaw 🦞
 """
-# v7.0.0 — Supabase persistence, password gate
+# v8.0.0 — Archive system, RSVP tracking, CSV download, improved group hub layout
 
+import io
 import json
 import math
 import pathlib
@@ -25,6 +26,15 @@ if "authenticated" not in st.session_state:
 
 if not st.session_state.authenticated:
     st.title("💒 Wedding Guest Network")
+    # Guard: secrets not yet configured on Streamlit Cloud
+    if "auth" not in st.secrets or "password" not in st.secrets["auth"]:
+        st.error(
+            "⚠️ App secrets are not configured. "
+            "Go to **Manage app → Settings → Secrets** and add:\n\n"
+            "```toml\n[auth]\npassword = \"your-password\"\n\n"
+            "[supabase]\nurl = \"https://...\"\nkey = \"eyJ...\"\n```"
+        )
+        st.stop()
     st.markdown("##### Please enter the access password")
     pw = st.text_input("Password", type="password", placeholder="Enter password…")
     if pw:
@@ -50,16 +60,23 @@ def load_guests() -> list[dict]:
     """Fetch all guests from Supabase, ordered by name."""
     rows = get_supabase().table("guests").select("*").order("name").execute().data
     # Supabase returns groups as a Python list already (PostgreSQL text[])
+    for r in rows:
+        r.setdefault("rsvp", "Pending")
+        r.setdefault("archived", False)
     return rows
 
 def save_guest(guest: dict) -> None:
     """Upsert a single guest record (match on name)."""
-    row = {k: guest[k] for k in ("name", "side", "groups", "priority", "notes") if k in guest}
+    row = {k: guest[k] for k in ("name", "side", "groups", "priority", "notes", "rsvp", "archived") if k in guest}
     get_supabase().table("guests").upsert(row, on_conflict="name").execute()
 
 def delete_guest(name: str) -> None:
     """Delete a guest by name."""
     get_supabase().table("guests").delete().eq("name", name).execute()
+
+def archive_guest(name: str, archived: bool) -> None:
+    """Set the archived flag for a guest by name."""
+    get_supabase().table("guests").update({"archived": archived}).eq("name", name).execute()
 
 # =============================================================================
 # GUEST DATA — loaded from Supabase (falls back to guests.json for local dev)
@@ -69,17 +86,18 @@ _GUESTS_FILE = pathlib.Path(__file__).parent / "guests.json"
 
 def _load_initial() -> list[dict]:
     try:
-        guests = load_guests()
-        if guests:
-            return guests
+        return load_guests()
     except Exception:
         pass
     # Fallback: local JSON (local development without credentials)
+    st.session_state["_db_offline"] = True
     with open(_GUESTS_FILE, encoding="utf-8") as f:
         data = json.load(f)
     for g in data:
         if "groups" not in g:
             g["groups"] = [g.pop("group")] if "group" in g else []
+        g.setdefault("rsvp", "Pending")
+        g.setdefault("archived", False)
     return data
 
 # =============================================================================
@@ -118,6 +136,8 @@ SIDE_SHAPE  = {"Rafael": "square", "Catarina": "diamond", "Common": "hexagon"}
 
 PRIORITY_SIZE = {"High": 28, "Medium": 18, "Low": 11}
 
+RSVP_BORDER = {"Confirmed": "#4CAF50", "Declined": "#EF5350", "Pending": "#FFB300"}
+
 ALL_GROUPS = sorted([
     "Family", "Basic School", "Secondary School", "University",
     "Reboleira Parish", "Erasmus Milan", "Erasmus Netherlands",
@@ -140,7 +160,7 @@ if _pending_raw and isinstance(_pending_raw, str):
         for u in (updated if isinstance(updated, list) else [updated]):
             g = next((x for x in st.session_state.get("guests", []) if x["name"] == u.get("name")), None)
             if g:
-                for k in ("priority", "groups", "side", "notes"):
+                for k in ("priority", "groups", "side", "notes", "rsvp", "archived"):
                     if k in u:
                         g[k] = u[k]
                 save_guest(g)   # persist to Supabase
@@ -160,6 +180,8 @@ if "guests" not in st.session_state:
 
 with st.sidebar:
     st.title("💒 Guest Management")
+    if st.session_state.get("_db_offline"):
+        st.warning("⚠️ Database not connected — changes won't be saved. Check Supabase secrets.")
 
     with st.form("add_guest_form", clear_on_submit=True):
         st.subheader("Add New Guest")
@@ -176,6 +198,7 @@ with st.sidebar:
                 new_guest = {
                     "name": new_name, "side": new_side, "groups": new_groups,
                     "priority": new_priority, "notes": new_notes,
+                    "rsvp": "Pending", "archived": False,
                 }
                 st.session_state.guests.append(new_guest)
                 try:
@@ -191,16 +214,60 @@ with st.sidebar:
     filter_priority = st.multiselect("Priority", ["High", "Medium", "Low"],
                                       default=["High", "Medium", "Low"])
     filter_group    = st.multiselect("Group", ALL_GROUPS, default=ALL_GROUPS)
+    filter_rsvp     = st.multiselect("RSVP", ["Confirmed", "Pending", "Declined"],
+                                      default=["Confirmed", "Pending", "Declined"])
 
     st.divider()
     st.subheader("Statistics")
     gs = st.session_state.guests
-    st.metric("Total", len(gs))
-    st.metric("High Priority", sum(1 for g in gs if g["priority"] == "High"))
+    non_archived_gs = [g for g in gs if not g.get("archived", False)]
+    archived_gs = [g for g in gs if g.get("archived", False)]
+    st.metric("Total", len(non_archived_gs))
+    st.metric("High Priority", sum(1 for g in non_archived_gs if g["priority"] == "High"))
     c1, c2 = st.columns(2)
-    c1.metric("Rafael",   sum(1 for g in gs if g["side"] == "Rafael"))
-    c2.metric("Catarina", sum(1 for g in gs if g["side"] == "Catarina"))
-    st.metric("Common",   sum(1 for g in gs if g["side"] == "Common"))
+    c1.metric("Rafael",   sum(1 for g in non_archived_gs if g["side"] == "Rafael"))
+    c2.metric("Catarina", sum(1 for g in non_archived_gs if g["side"] == "Catarina"))
+    st.metric("Common",   sum(1 for g in non_archived_gs if g["side"] == "Common"))
+
+    # RSVP stats
+    st.markdown(
+        f"✅ Conf. **{sum(1 for g in non_archived_gs if g.get('rsvp') == 'Confirmed')}** &nbsp; "
+        f"⏳ Pend. **{sum(1 for g in non_archived_gs if g.get('rsvp', 'Pending') == 'Pending')}** &nbsp; "
+        f"❌ Decl. **{sum(1 for g in non_archived_gs if g.get('rsvp') == 'Declined')}**"
+    )
+
+    # Download CSV
+    csv_guests = non_archived_gs
+    csv_rows = [
+        {
+            "Name": g["name"],
+            "Side": g["side"],
+            "Groups": ", ".join(g["groups"]),
+            "Priority": g["priority"],
+            "RSVP": g.get("rsvp", "Pending"),
+            "Notes": g.get("notes", ""),
+        }
+        for g in csv_guests
+    ]
+    csv_buf = io.StringIO()
+    pd.DataFrame(csv_rows).to_csv(csv_buf, index=False)
+    st.download_button(
+        "📥 Download guest list (CSV)",
+        data=csv_buf.getvalue(),
+        file_name="wedding_guests.csv",
+        mime="text/csv",
+    )
+
+    # Archived guests expander
+    if archived_gs:
+        with st.expander(f"📦 Archived ({len(archived_gs)})"):
+            for ag in archived_gs:
+                col1, col2 = st.columns([3, 1])
+                col1.write(ag["name"])
+                if col2.button("↩ Restore", key=f"restore_{ag['name']}"):
+                    ag["archived"] = False
+                    save_guest(ag)
+                    st.rerun()
 
 # =============================================================================
 # MAIN
@@ -208,17 +275,24 @@ with st.sidebar:
 
 filtered = [
     g for g in st.session_state.guests
-    if g["side"] in filter_side
+    if not g.get("archived", False)
+    and g["side"] in filter_side
     and g["priority"] in filter_priority
     and any(grp in filter_group for grp in g["groups"])
+    and g.get("rsvp", "Pending") in filter_rsvp
 ]
+
+archived_count = sum(1 for g in st.session_state.guests if g.get("archived", False))
 
 st.title("💒 Wedding Guest Network")
 st.caption(
     "⬜ Square = Rafael's groups  ·  ◇ Diamond = Catarina's  ·  ⬡ Hexagon = Common  ·  "
     "Click a guest to view/edit  ·  Double-click a group to collapse/expand"
 )
-st.caption(f"Showing {len(filtered)} of {len(st.session_state.guests)} guests")
+caption_text = f"Showing {len(filtered)} of {len(non_archived_gs)} guests"
+if archived_count > 0:
+    caption_text += f"  ·  {archived_count} archived"
+st.caption(caption_text)
 
 # =============================================================================
 # BUILD PYVIS NETWORK
@@ -234,7 +308,7 @@ def build_network(guests: list) -> Network:
 
     net.set_options(json.dumps({
         "nodes": {
-            "borderWidth": 2,
+            "borderWidth": 3,
             "font": {"size": 12, "face": "arial", "color": "white"},
         },
         "edges": {
@@ -260,8 +334,8 @@ def build_network(guests: list) -> Network:
     }))
 
     for node_id, label, bg, border, x in [
-        ("__Rafael__",   "Rafael\n(Groom)",   "#0D47A1", "#90CAF9", -580),
-        ("__Catarina__", "Catarina\n(Bride)",  "#AD1457", "#F48FB1",  580),
+        ("__Rafael__",   "Rafael\n(Groom)",   "#0D47A1", "#90CAF9", -420),
+        ("__Catarina__", "Catarina\n(Bride)",  "#AD1457", "#F48FB1",  420),
     ]:
         net.add_node(node_id, label=label,
                      color={"background": bg, "border": border,
@@ -271,21 +345,39 @@ def build_network(guests: list) -> Network:
                      title="", x=x, y=0, physics=False)
 
     all_grps = sorted(set(grp for g in guests for grp in g["groups"]))
-    catarina_grps = [g for g in all_grps if g in ("Friends", "Work")]
-    common_grps   = [g for g in all_grps if "Common" in g]
-    rafael_grps   = [g for g in all_grps if g not in catarina_grps and g not in common_grps]
 
-    def grp_side(grp):
-        if grp in catarina_grps: return "Catarina"
-        if grp in common_grps:   return "Common"
+    def grp_side(grp: str) -> str:
+        if "Common" in grp:
+            return "Common"
+        in_grp = [g for g in guests if grp in g.get("groups", [])]
+        if not in_grp:
+            return "Rafael"
+        sides = {g["side"] for g in in_grp}
+        if "Rafael" in sides and "Catarina" in sides:
+            return "Common"
+        if sides == {"Catarina"}:
+            return "Catarina"
         return "Rafael"
 
-    def add_group_arc(group_list, cx, cy, radius, arc_start, arc_end):
+    grp_side_map = {grp: grp_side(grp) for grp in all_grps}
+    rafael_grps   = [g for g in all_grps if grp_side_map[g] == "Rafael"]
+    catarina_grps = [g for g in all_grps if grp_side_map[g] == "Catarina"]
+    common_grps   = [g for g in all_grps if grp_side_map[g] == "Common"]
+
+    def arc_span_deg(n: int) -> float:
+        return min(170.0, max(0.0, (n - 1) * 22.0))
+
+    def add_group_arc(group_list, cx, cy, radius, center_deg):
         n = len(group_list)
+        if n == 0:
+            return
+        span = arc_span_deg(n)
         for i, grp in enumerate(group_list):
-            angle = (arc_start + arc_end) / 2 if n == 1 else \
-                    arc_start + (arc_end - arc_start) * i / (n - 1)
-            side   = grp_side(grp)
+            if n == 1:
+                angle_deg = center_deg
+            else:
+                angle_deg = center_deg - span / 2 + span * i / (n - 1)
+            side   = grp_side_map.get(grp, "Rafael")
             bg     = GROUP_HUB_COLORS.get(grp, "#607D8B")
             border = SIDE_BORDER[side]
             shape  = SIDE_SHAPE[side]
@@ -296,17 +388,14 @@ def build_network(guests: list) -> Network:
                 size=26, shape=shape,
                 font={"size": 11, "color": "white"},
                 title="",
-                x=int(cx + radius * math.cos(angle)),
-                y=int(cy + radius * math.sin(angle)),
+                x=int(cx + radius * math.cos(math.radians(angle_deg))),
+                y=int(cy + radius * math.sin(math.radians(angle_deg))),
                 physics=False,
             )
 
-    # Left semicircle for Rafael's groups (180° sweep, opening left)
-    add_group_arc(rafael_grps,   -580,  0, 400, math.pi * 0.50, math.pi * 1.50)
-    # Right semicircle for Catarina's groups (180° sweep, opening right)
-    add_group_arc(catarina_grps,  580,  0, 400, math.pi * -0.50, math.pi * 0.50)
-    # Common groups arc at top center
-    add_group_arc(common_grps,      0, -260, 180, math.pi * -0.35, math.pi * 0.35)
+    add_group_arc(rafael_grps,   -420, 0, 530, 180)
+    add_group_arc(catarina_grps,  420, 0, 530,   0)
+    add_group_arc(common_grps,      0, 0, 620, 270)
 
     added_hub_edges = set()
     for g in guests:
@@ -322,11 +411,11 @@ def build_network(guests: list) -> Network:
     for g in guests:
         primary    = g["groups"][0] if g["groups"] else "Family"
         node_color = GROUP_GUEST_COLORS.get(primary, "#90A4AE")
-        hub_color  = GROUP_HUB_COLORS.get(primary, "#607D8B")
+        rsvp_color = RSVP_BORDER.get(g.get("rsvp", "Pending"), "#FFB300")
         net.add_node(
             g["name"], label=g["name"],
-            color={"background": node_color, "border": hub_color,
-                   "highlight": {"background": hub_color, "border": "#ffffff"}},
+            color={"background": node_color, "border": rsvp_color,
+                   "highlight": {"background": node_color, "border": "#ffffff"}},
             size=PRIORITY_SIZE.get(g["priority"], 14),
             shape="dot",
             font={"size": 11, "color": "white"},
@@ -354,6 +443,7 @@ def inject_interactions(html: str, guests: list) -> str:
     guest_colors_json = json.dumps(GROUP_GUEST_COLORS,  ensure_ascii=False)
     priority_json     = json.dumps(PRIORITY_SIZE,       ensure_ascii=False)
     all_groups_json   = json.dumps(ALL_GROUPS,          ensure_ascii=False)
+    rsvp_colors_json  = json.dumps(RSVP_BORDER,         ensure_ascii=False)
 
     code = f"""
 <style>
@@ -424,6 +514,11 @@ def inject_interactions(html: str, guests: list) -> str:
 .gn-Catarina {{ color:#f48fb1; }}
 .gn-Common   {{ color:#ce93d8; }}
 .gn-notes  {{ font-style:italic; color:#bbb; }}
+.gn-rsvp-Confirmed {{ color: #4CAF50; font-weight: bold; }}
+.gn-rsvp-Declined  {{ color: #EF5350; font-weight: bold; }}
+.gn-rsvp-Pending   {{ color: #FFB300; font-weight: bold; }}
+.gn-danger {{ background: #b71c1c; color: #fff; }}
+.gn-danger:hover {{ background: #c62828; }}
 /* ── Edit mode ── */
 .gn-row    {{ display:flex; flex-direction:column; gap:3px; margin:6px 0; }}
 .gn-row label {{ color:#888; font-size:11px; text-transform:uppercase; letter-spacing:.5px; }}
@@ -493,12 +588,16 @@ def inject_interactions(html: str, guests: list) -> str:
     <div class="gn-field"><span class="gn-lbl">Side</span><span class="gn-val" id="gn-vside"></span></div>
     <div class="gn-field"><span class="gn-lbl">Groups</span><span class="gn-val" id="gn-vgroups"></span></div>
     <div class="gn-field"><span class="gn-lbl">Priority</span><span class="gn-val" id="gn-vpriority"></span></div>
+    <div class="gn-field"><span class="gn-lbl">RSVP</span><span class="gn-val" id="gn-vrsvp"></span></div>
     <div class="gn-field" id="gn-vnotes-row" style="display:none">
       <span class="gn-lbl">Notes</span><span class="gn-val gn-notes" id="gn-vnotes"></span>
     </div>
     <div class="gn-btn-row">
-      <button class="gn-btn gn-primary"   onclick="gnStartEdit()">&#9998;&nbsp;Edit</button>
+      <button class="gn-btn gn-primary" onclick="gnStartEdit()">&#9998;&nbsp;Edit</button>
       <button class="gn-btn gn-secondary" onclick="gnClose()">Close</button>
+    </div>
+    <div class="gn-btn-row" style="margin-top:5px">
+      <button class="gn-btn gn-danger" style="font-size:11px" onclick="gnArchive()">&#128230;&nbsp;Archive guest</button>
     </div>
   </div>
 
@@ -510,6 +609,14 @@ def inject_interactions(html: str, guests: list) -> str:
         <option value="High">High</option>
         <option value="Medium">Medium</option>
         <option value="Low">Low</option>
+      </select>
+    </div>
+    <div class="gn-row">
+      <label>RSVP</label>
+      <select id="gn-er">
+        <option value="Pending">Pending</option>
+        <option value="Confirmed">Confirmed</option>
+        <option value="Declined">Declined</option>
       </select>
     </div>
     <div class="gn-row">
@@ -542,6 +649,7 @@ var _HUB_COLORS  = {hub_colors_json};
 var _GUEST_COLORS= {guest_colors_json};
 var _PSIZES      = {priority_json};
 var _ALL_GROUPS  = {all_groups_json};
+var _RSVP_COLORS = {rsvp_colors_json};
 
 // ── Popup state ──────────────────────────────────────────────────────────────
 var _gnSel    = null;
@@ -580,6 +688,9 @@ function gnShow(id, sx, sy) {{
   document.getElementById("gn-vgroups").textContent = (g.groups || []).join(", ");
   var pEl = document.getElementById("gn-vpriority");
   pEl.textContent = g.priority; pEl.className = "gn-val gn-" + g.priority;
+  var rEl = document.getElementById("gn-vrsvp");
+  rEl.textContent = g.rsvp || "Pending";
+  rEl.className = "gn-val gn-rsvp-" + (g.rsvp || "Pending");
   var nRow = document.getElementById("gn-vnotes-row");
   if (g.notes) {{
     document.getElementById("gn-vnotes").textContent = g.notes;
@@ -610,6 +721,7 @@ function gnStartEdit() {{
   var g = _GN[_gnSel];
   if (!g) return;
   document.getElementById("gn-ep").value = g.priority;
+  document.getElementById("gn-er").value = g.rsvp || "Pending";
   document.getElementById("gn-es").value = g.side;
   document.getElementById("gn-eg").value = (g.groups || []).join(", ");
   document.getElementById("gn-en").value = g.notes || "";
@@ -630,10 +742,27 @@ function gnCancelEdit() {{
   document.getElementById("gn-edit").style.display = "none";
 }}
 
+function gnArchive() {{
+  if (!_gnSel) return;
+  var g = _GN[_gnSel];
+  if (!g) return;
+  if (!confirm("Archive '" + g.name + "'?\\nThey will be hidden from the network.\\nRestore them from the sidebar.")) return;
+  g.archived = true;
+  nodes.update({{id: _gnSel, hidden: true}});
+  network.getConnectedEdges(_gnSel).forEach(function(eId) {{
+    edges.update({{id: eId, hidden: true}});
+  }});
+  gnClose();
+  try {{
+    window.parent.sessionStorage.setItem("wgn_save", JSON.stringify([g]));
+  }} catch(e) {{}}
+}}
+
 function gnSave() {{
   var g = _GN[_gnSel];
   if (!g) return;
   var newPriority = document.getElementById("gn-ep").value;
+  var newRsvp     = document.getElementById("gn-er").value;
   var newSide     = document.getElementById("gn-es").value;
   var newGroups   = document.getElementById("gn-eg").value
                       .split(",").map(function(s){{ return s.trim(); }}).filter(Boolean);
@@ -641,6 +770,7 @@ function gnSave() {{
 
   // Update in-memory record
   g.priority = newPriority;
+  g.rsvp     = newRsvp;
   g.side     = newSide;
   g.groups   = newGroups;
   g.notes    = newNotes;
@@ -652,8 +782,8 @@ function gnSave() {{
   nodes.update({{
     id: _gnSel,
     size:  _PSIZES[newPriority] || 14,
-    color: {{ background: nodeColor, border: hubColor,
-              highlight: {{ background: hubColor, border: "#ffffff" }} }}
+    color: {{ background: nodeColor, border: _RSVP_COLORS[newRsvp] || "#FFB300",
+              highlight: {{ background: nodeColor, border: "#ffffff" }} }}
   }});
 
   // Update view mode fields
@@ -663,6 +793,8 @@ function gnSave() {{
   document.getElementById("gn-vgroups").textContent = (g.groups || []).join(", ");
   var pEl = document.getElementById("gn-vpriority");
   pEl.textContent = g.priority; pEl.className = "gn-val gn-" + g.priority;
+  var rEl2 = document.getElementById("gn-vrsvp");
+  rEl2.textContent = g.rsvp; rEl2.className = "gn-val gn-rsvp-" + g.rsvp;
   var nRow = document.getElementById("gn-vnotes-row");
   if (g.notes) {{
     document.getElementById("gn-vnotes").textContent = g.notes;
@@ -671,9 +803,9 @@ function gnSave() {{
     nRow.style.display = "none";
   }}
 
-  // Persist ALL guests to sessionStorage → bridge picks up → Python reruns
+  // Persist only the changed guest to sessionStorage → bridge picks up → Python reruns
   try {{
-    window.parent.sessionStorage.setItem("wgn_save", JSON.stringify(Object.values(_GN)));
+    window.parent.sessionStorage.setItem("wgn_save", JSON.stringify([g]));
   }} catch(e) {{}}
 
   // Return to view mode
@@ -851,7 +983,9 @@ st.subheader("Guest List")
 df_rows = [
     {"Name": g["name"], "Side": g["side"],
      "Groups": ", ".join(g["groups"]),
-     "Priority": g["priority"], "Notes": g.get("notes", "")}
+     "Priority": g["priority"],
+     "RSVP": g.get("rsvp", "Pending"),
+     "Notes": g.get("notes", "")}
     for g in filtered
 ]
 
@@ -871,12 +1005,20 @@ if df_rows:
         if v == "Medium": return "background-color:#fff9c4;color:#f57f17"
         return "background-color:#ffcdd2;color:#c62828"
 
+    def color_rsvp(v):
+        if v == "Confirmed": return "background-color:#c8e6c9;color:#2e7d32"
+        if v == "Declined":  return "background-color:#ffcdd2;color:#c62828"
+        return "background-color:#fff9c4;color:#f57f17"
+
     st.dataframe(
-        df.style.map(color_side, subset=["Side"]).map(color_priority, subset=["Priority"]),
+        df.style
+          .map(color_side, subset=["Side"])
+          .map(color_priority, subset=["Priority"])
+          .map(color_rsvp, subset=["RSVP"]),
         hide_index=True,
     )
 else:
     st.info("No guests to display.")
 
 st.divider()
-st.caption("Built by OpenClaw 🦞 | Rafael & Catarina | v7.0.0")
+st.caption("Built by OpenClaw 🦞 | Rafael & Catarina | v8.0.0")
