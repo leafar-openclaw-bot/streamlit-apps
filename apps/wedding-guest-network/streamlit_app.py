@@ -378,7 +378,7 @@ def build_network(guests: list) -> Network:
         height="760px", width="100%",
         bgcolor="#1e1e1e", font_color="white",
         directed=False, notebook=False,
-        cdn_resources="in_line",
+        cdn_resources="remote",
     )
 
     net.set_options(json.dumps({
