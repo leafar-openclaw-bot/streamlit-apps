@@ -2,20 +2,25 @@
 <html><body style="margin:0;padding:0;overflow:hidden">
 <!--
   Bridge component:
-  - Receives graph_html + height as Streamlit props (via streamlit:render)
-  - Renders the graph in an inner iframe (so gnSave postMessages reach us as parent)
-  - Relays gnSave events to Streamlit via setComponentValue
-  - Sends null after each render to reset the value and avoid processing stale saves
+  • Receives graph_html + height as Streamlit props (streamlit:render)
+  • Renders the graph by document.write()-ing into the inner iframe so the
+    inner frame is same-origin as the bridge (not null-origin like srcdoc).
+    This means window.parent from gnSave() reliably reaches the bridge,
+    and CDN scripts load without CORS/CSP issues.
+  • Skips re-rendering when the HTML hasn't changed (avoids flicker on
+    unrelated Streamlit reruns).
+  • Relays {type:"gnSave"} postMessages from the inner frame to Streamlit.
 -->
 <iframe id="gf" style="width:100%;border:none;display:block"
         sandbox="allow-scripts allow-same-origin"></iframe>
 <script>
-var _frame   = document.getElementById("gf");
-var _lastSent = undefined;   // client-side dedup
+var _frame    = document.getElementById("gf");
+var _lastSent = undefined;
+var _lastHtml = undefined;
 
 function _send(val) {
   var s = JSON.stringify(val);
-  if (s === _lastSent) return;
+  if (s === _lastSent) return;   // client-side dedup — avoid spurious reruns
   _lastSent = s;
   window.parent.postMessage(
     { type: "streamlit:setComponentValue", value: val, dataType: "json" },
@@ -29,22 +34,36 @@ window.parent.postMessage({ type: "streamlit:componentReady", apiVersion: 1 }, "
 window.addEventListener("message", function(e) {
   if (!e.data) return;
 
-  // Props arriving from Streamlit
+  // ── Props from Streamlit ──────────────────────────────────────────────────
   if (e.data.type === "streamlit:render") {
     var args   = e.data.args || {};
     var height = args.height || 820;
+    var html   = args.graph_html || "";
+
     _frame.style.height = height + "px";
-    _frame.srcdoc = args.graph_html || "";
+
+    // Only reload inner frame when graph data actually changed
+    if (html !== _lastHtml) {
+      _lastHtml = html;
+      // document.write() keeps the inner frame same-origin as the bridge.
+      // This is safer than srcdoc (which sets null origin) and ensures
+      // both CDN script loading and window.parent.postMessage() work.
+      var doc = _frame.contentDocument || _frame.contentWindow.document;
+      doc.open();
+      doc.write(html);
+      doc.close();
+    }
+
     window.parent.postMessage(
       { type: "streamlit:setFrameHeight", height: height + 2 },
       "*"
     );
-    // Reset component value after each render so Python doesn't re-process
-    // a stale save on the next unrelated rerun.
+    // Reset value to null after each render so Python doesn't re-process
+    // a stale save on the next unrelated Streamlit rerun.
     _send(null);
   }
 
-  // Save / archive event posted from the inner graph iframe
+  // ── Save / archive event from inner graph frame (window.parent = us) ─────
   if (e.data.type === "gnSave") {
     _send(e.data.data);
   }
